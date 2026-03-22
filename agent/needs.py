@@ -90,14 +90,16 @@ class Needs:
         """
         Devuelve la necesidad más urgente para el seeking autónomo.
         Usa umbrales de seeking (más bajos que LLM).
-        Higiene excluida: solo el usuario puede bañar a una criatura.
         """
         from config import (
-            HUNGER_SEEK_THRESHOLD, HAPPINESS_SEEK_THRESHOLD, ENERGY_SEEK_THRESHOLD
+            HUNGER_SEEK_THRESHOLD, HYGIENE_SEEK_THRESHOLD,
+            HAPPINESS_SEEK_THRESHOLD, ENERGY_SEEK_THRESHOLD
         )
         candidates = []
         if self.hunger    >= HUNGER_SEEK_THRESHOLD:
             candidates.append(("hunger",    self.hunger - HUNGER_SEEK_THRESHOLD))
+        if self.hygiene   <= HYGIENE_SEEK_THRESHOLD:
+            candidates.append(("hygiene",   HYGIENE_SEEK_THRESHOLD - self.hygiene))
         if self.happiness <= HAPPINESS_SEEK_THRESHOLD:
             candidates.append(("happiness", HAPPINESS_SEEK_THRESHOLD - self.happiness))
         if self.energy    <= ENERGY_SEEK_THRESHOLD:

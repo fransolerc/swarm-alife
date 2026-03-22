@@ -438,12 +438,12 @@ class Renderer:
         # Nombre + gen
         name_s = self.font_medium.render(c.id, True, TOOLBAR_TEXT)
         gen_s  = self.font_tiny.render(f"gen {c.generation}", True, TOOLBAR_BTN_DARK)
-        self.screen.blit(name_s, (px+44, py+8))
-        self.screen.blit(gen_s,  (px+44, py+22))
+        self.screen.blit(name_s, (px+44, py+6))
+        self.screen.blit(gen_s,  (px+44, py+19))
 
-        # Barras de necesidades
+        # Barras de necesidades — 4 barras de 6px con gap de 2px = 32px total
         bw = pw - 50
-        bh = 7
+        bh = 6
         bx = px + 44
         needs = [
             (c.needs.hunger,    COLOR_HUNGER_BAR,    True),
@@ -451,14 +451,14 @@ class Renderer:
             (c.needs.happiness, COLOR_HAPPINESS_BAR, False),
             (c.needs.energy,    COLOR_ENERGY_BAR,    False),
         ]
-        by = py + 34
+        by = py + 32
         for val, col, inv in needs:
-            pygame.draw.rect(self.screen, TOOLBAR_BTN_DARK, (bx, by, bw, bh), border_radius=3)
+            pygame.draw.rect(self.screen, TOOLBAR_BTN_DARK, (bx, by, bw, bh), border_radius=2)
             fill = (1.0 - val/NEED_MAX) if inv else (val/NEED_MAX)
             fw = max(0, int(bw * fill))
             if fw:
-                pygame.draw.rect(self.screen, col, (bx, by, fw, bh), border_radius=3)
-            by += bh + 3
+                pygame.draw.rect(self.screen, col, (bx, by, fw, bh), border_radius=2)
+            by += bh + 2
 
     def _draw_creature_mini(self, cx, cy, state):
         """Avatar pequeño de criatura para el panel info."""
@@ -551,7 +551,7 @@ class Renderer:
         if obj_type is None:
             return
 
-
+        # Si está sobre el mundo, snapping a celda
         if placement.hover_valid and my < _WORLD_H:
             snap_x = placement.hover_col * GRID_CELL + GRID_CELL//2
             snap_y = placement.hover_row * GRID_CELL + GRID_CELL//2
