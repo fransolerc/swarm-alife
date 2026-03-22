@@ -76,7 +76,6 @@ def _handle_keydown(
     event: pygame.event.Event,
     creatures: list[Creature],
     selected: Creature | None,
-    placement: PlacementMode,
     world: WorldMap,
 ) -> bool:
     """Returns True if the simulation should quit."""
@@ -160,7 +159,7 @@ def _handle_mouse_event(
             placement.on_right_click(mx, my)
 
     if event.type == pygame.MOUSEBUTTONUP and event.button == 1:
-        placement.on_mouse_up(mx, my)
+        placement.on_mouse_up()
 
     return selected
 
@@ -222,7 +221,7 @@ def main() -> None:
             if event.type == pygame.QUIT:
                 running = False
             elif event.type == pygame.KEYDOWN:
-                if _handle_keydown(event, creatures, selected, placement, world):
+                if _handle_keydown(event, creatures, selected, world):
                     running = False
             elif event.type in (pygame.MOUSEMOTION, pygame.MOUSEBUTTONDOWN, pygame.MOUSEBUTTONUP):
                 selected = _handle_mouse_event(event, creatures, selected, placement, world)

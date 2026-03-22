@@ -39,7 +39,7 @@ _CHIP_Y0  = 0   # se calcula en runtime — ver get_chip_rects()
 
 def get_chip_rects(palette_x: int, y_start: int) -> list[tuple[int,int,int,int]]:
     """
-    Devuelve [(x,y,w,h), ...] para cada chip de la paleta.
+    Devuelve [(x, y, w, h), ...] para cada chip de la paleta.
     Los chips ahora son horizontales en la barra inferior.
     """
     from config import TOOLBAR_HEIGHT
@@ -101,16 +101,15 @@ class PlacementMode:
         if self.dragging:
             self._update_hover(mx, my)
 
-    def on_mouse_up(self, mx: int, my: int) -> bool:
+    def on_mouse_up(self) -> bool:
         """
         Suelta el objeto. Si está sobre el mundo, lo coloca.
         Devuelve True si se colocó.
         """
         if not self.dragging:
             return False
-        placed = False
-        if self.hover_valid and self.drag_type is not None:
-            placed = self._world.place(self.drag_type, self.hover_col, self.hover_row)
+        placed = self._world.place(self.drag_type, self.hover_col, self.hover_row) \
+            if self.hover_valid and self.drag_type is not None else False
         self._cancel()
         return placed
 
