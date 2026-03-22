@@ -87,48 +87,53 @@ class Needs:
         return crit
 
     def most_urgent(self) -> str | None:
-        """Devuelve el nombre de la necesidad más urgente, o None si todo está bien."""
+        """
+        Devuelve la necesidad más urgente para el seeking autónomo.
+        Usa umbrales de seeking (más bajos que LLM).
+        Higiene excluida: solo el usuario puede bañar a una criatura.
+        """
+        from config import (
+            HUNGER_SEEK_THRESHOLD, HAPPINESS_SEEK_THRESHOLD, ENERGY_SEEK_THRESHOLD
+        )
         candidates = []
+        if self.hunger    >= HUNGER_SEEK_THRESHOLD:
+            candidates.append(("hunger",    self.hunger - HUNGER_SEEK_THRESHOLD))
+        if self.happiness <= HAPPINESS_SEEK_THRESHOLD:
+            candidates.append(("happiness", HAPPINESS_SEEK_THRESHOLD - self.happiness))
+        if self.energy    <= ENERGY_SEEK_THRESHOLD:
+            candidates.append(("energy",    ENERGY_SEEK_THRESHOLD - self.energy))
 
-        # hunger: urgencia = valor (más alto = más urgente)
-        candidates.append(("hunger",    self.hunger))
-        # hygiene: urgencia = 100 - valor (más bajo = más urgente)
-        candidates.append(("hygiene",   NEED_MAX - self.hygiene))
-        # happiness: urgencia = 100 - valor
-        candidates.append(("happiness", NEED_MAX - self.happiness))
-        # energy: urgencia = 100 - valor
-        candidates.append(("energy",    NEED_MAX - self.energy))
-
-        most_urgent = max(candidates, key=lambda x: x[1])
-        # Solo reportar si supera el umbral LLM
-        if most_urgent[0] == "hunger"    and self.hunger    >= HUNGER_LLM_THRESHOLD:
-            return "hunger"
-        if most_urgent[0] == "hygiene"   and self.hygiene   <= HYGIENE_LLM_THRESHOLD:
-            return "hygiene"
-        if most_urgent[0] == "happiness" and self.happiness <= HAPPINESS_LLM_THRESHOLD:
-            return "happiness"
-        if most_urgent[0] == "energy"    and self.energy    <= ENERGY_LLM_THRESHOLD:
-            return "energy"
-        return None
+        if not candidates:
+            return None
+        return max(candidates, key=lambda x: x[1])[0]
 
     # --- Acciones del usuario ---
 
     def feed(self) -> None:
         self.hunger = clamp(self.hunger - FEED_HUNGER_REDUCTION, NEED_MIN, NEED_MAX)
-        logger.debug("Needs: fed → hunger %.1f", self.hunger)
+
+    def feed_amount(self, amount: float) -> None:
+        self.hunger = clamp(self.hunger - amount, NEED_MIN, NEED_MAX)
 
     def shower(self) -> None:
         self.hygiene = clamp(self.hygiene + SHOWER_HYGIENE_RESTORE, NEED_MIN, NEED_MAX)
-        logger.debug("Needs: showered → hygiene %.1f", self.hygiene)
+
+    def shower_amount(self, amount: float) -> None:
+        self.hygiene = clamp(self.hygiene + amount, NEED_MIN, NEED_MAX)
 
     def play(self) -> None:
         self.happiness = clamp(self.happiness + PLAY_HAPPINESS_BONUS, NEED_MIN, NEED_MAX)
         self.energy    = clamp(self.energy    - PLAY_ENERGY_COST,     NEED_MIN, NEED_MAX)
-        logger.debug("Needs: played → happiness %.1f, energy %.1f", self.happiness, self.energy)
+
+    def play_amount(self, happiness: float, energy_cost: float) -> None:
+        self.happiness = clamp(self.happiness + happiness,   NEED_MIN, NEED_MAX)
+        self.energy    = clamp(self.energy    - energy_cost, NEED_MIN, NEED_MAX)
 
     def sleep(self) -> None:
         self.energy = clamp(self.energy + SLEEP_ENERGY_RESTORE, NEED_MIN, NEED_MAX)
-        logger.debug("Needs: slept → energy %.1f", self.energy)
+
+    def sleep_amount(self, amount: float) -> None:
+        self.energy = clamp(self.energy + amount, NEED_MIN, NEED_MAX)
 
     # --- Social: modificadores externos ---
 

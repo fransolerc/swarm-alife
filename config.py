@@ -50,6 +50,13 @@ HYGIENE_INITIAL   = 80.0
 HAPPINESS_INITIAL = 70.0
 ENERGY_INITIAL    = 80.0
 
+# Umbrales de seeking: disparan que la criatura busque el objeto autónomamente
+# Más bajos que LLM para que actúen antes de llegar al límite
+HUNGER_SEEK_THRESHOLD    = 45.0   # busca comida cuando hambre > 45
+HYGIENE_SEEK_THRESHOLD   = 50.0   # busca baño cuando higiene < 50  (solo si usuario la dirige)
+HAPPINESS_SEEK_THRESHOLD = 40.0   # busca pelota cuando felicidad < 40
+ENERGY_SEEK_THRESHOLD    = 30.0   # busca cama cuando energía < 30
+
 # Umbrales de comunicación: dispara invocación LLM
 HUNGER_LLM_THRESHOLD    = 75.0
 HYGIENE_LLM_THRESHOLD   = 25.0
@@ -64,6 +71,13 @@ ENERGY_CRITICAL    = 10.0
 
 # Cooldown mínimo entre mensajes LLM por criatura (segundos reales)
 LLM_MESSAGE_COOLDOWN = 30.0
+
+# Duración de uso de cada objeto (segundos que la criatura permanece junto al objeto)
+OBJ_USE_DURATION: dict = {
+    "BATH": 4.0,   # bañarse
+    "BALL": 5.0,   # jugar
+    "BED":  8.0,   # descansar
+}
 
 # --- Comportamiento social ---
 # Contagio: cuánto afecta el estado de un vecino al propio
@@ -95,6 +109,26 @@ LLM_MAX_TOKENS = 80           # Respuestas cortas, solo comunicación
 # --- Tiempo simulado ---
 # 1 minuto real = SIM_MINUTES_PER_REAL_MINUTE minutos simulados
 SIM_MINUTES_PER_REAL_MINUTE = 60   # 1 hora simulada por minuto real
+
+# --- Mundo: cuadrícula ---
+GRID_CELL         = 40          # píxeles por celda
+OBJECT_USE_RANGE  = 38          # distancia para interactuar con un objeto (px)
+
+# --- Objetos: efectos al usarlos ---
+TREE_BLOCKS_PATH       = True
+FOOD_HUNGER_REDUCTION  = 45.0
+BATH_HYGIENE_RESTORE   = 55.0
+BALL_HAPPINESS_BONUS   = 35.0
+BALL_ENERGY_COST       = 10.0
+BED_ENERGY_RESTORE     = 65.0
+
+# Cooldown por objeto: segundos entre usos consecutivos por la misma criatura
+OBJECT_USE_COOLDOWN = 8.0
+
+# --- Modo colocación ---
+PLACEMENT_GRID_COLOR    = (58,  82,  40)
+PLACEMENT_HOVER_COLOR   = (144, 224, 112)
+PLACEMENT_BLOCKED_COLOR = (200, 80,  60)
 
 # --- Rendering ---
 UI_PANEL_WIDTH    = 260       # Ancho del panel de estado derecho
