@@ -11,8 +11,18 @@ WINDOW_HEIGHT = 720
 WINDOW_TITLE = "swarm-alife"
 
 # --- Simulación ---
-NUM_CREATURES = 10        # Número inicial de criaturas
+NUM_CREATURES = 1         # Criaturas al inicio (la experiencia canónica es 1)
 SIM_SPEED = 1.0           # Multiplicador de velocidad de simulación (1.0 = tiempo real)
+
+# --- Reproducción asexual (división) ---
+# Condición: edad mínima Y todas las necesidades por encima del umbral
+REPRODUCTION_MIN_AGE        = 60.0   # Segundos reales mínimos de vida antes de poder dividirse
+REPRODUCTION_NEED_THRESHOLD = 55.0   # Todas las necesidades deben superar este valor
+REPRODUCTION_COOLDOWN       = 90.0   # Segundos reales de cooldown tras dividirse
+# Las crías heredan necesidades del padre con algo de varianza
+OFFSPRING_NEED_VARIANCE     = 15.0   # ±N sobre el valor del padre
+# Distancia de spawn respecto al padre
+OFFSPRING_SPAWN_RADIUS      = 40.0
 
 # --- Criaturas: movimiento ---
 CREATURE_RADIUS = 18      # Radio visual (píxeles)

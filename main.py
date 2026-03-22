@@ -24,14 +24,24 @@ logger = logging.getLogger(__name__)
 
 _AREA_W = WINDOW_WIDTH - UI_PANEL_WIDTH
 
+# Contador global para IDs únicos de criaturas generadas en runtime
+_id_counter = 0
 
-def make_creatures(n: int) -> list[Creature]:
-    """Crea N criaturas con IDs únicos. Intenta cargar estado persistente."""
+
+def _next_id() -> str:
+    global _id_counter
+    cid = f"sw{_id_counter:03d}"
+    _id_counter += 1
+    return cid
+
+
+def make_initial_creatures() -> list[Creature]:
+    """Crea las criaturas iniciales. Intenta cargar estado persistente."""
     creatures = []
-    for i in range(n):
-        cid = f"sw{i:02d}"
+    for _ in range(NUM_CREATURES):
+        cid = _next_id()
         c = Creature(cid)
-        c.load()  # no-op si no existe fichero guardado
+        c.load()
         creatures.append(c)
     return creatures
 
@@ -52,16 +62,19 @@ def main() -> None:
     pygame.display.set_caption(WINDOW_TITLE)
     clock = pygame.time.Clock()
 
-    creatures = make_creatures(NUM_CREATURES)
+    creatures = make_initial_creatures()
     sim_clock = SimClock(start_hour=8.0)
     renderer  = Renderer(screen)
     selected: Creature | None = None
 
-    logger.info(f"swarm-alife started with {len(creatures)} creatures")
+    # Cola de criaturas a añadir (evita modificar la lista durante la iteración)
+    pending_spawn: list[Creature] = []
+
+    logger.info(f"swarm-alife started with {len(creatures)} creature(s)")
 
     running = True
     while running:
-        delta = clock.tick(FPS) / 1000.0  # segundos reales del último frame
+        delta = clock.tick(FPS) / 1000.0
 
         # --- Input ---
         for event in pygame.event.get():
@@ -72,7 +85,6 @@ def main() -> None:
                 if event.key == pygame.K_ESCAPE:
                     running = False
 
-                # Acciones globales (todas las criaturas)
                 elif event.key == pygame.K_f:
                     targets = [selected] if selected else creatures
                     for c in targets: c.feed()
@@ -89,16 +101,15 @@ def main() -> None:
                     if selected:
                         selected.sleep()
 
-                # Guardar estado
                 elif event.key == pygame.K_g:
                     for c in creatures:
                         c.save()
                     logger.info("State saved manually")
 
             elif event.type == pygame.MOUSEBUTTONDOWN:
-                if event.button == 1:  # clic izquierdo
+                if event.button == 1:
                     mx, my = event.pos
-                    if mx < _AREA_W:  # dentro del área de simulación
+                    if mx < _AREA_W:
                         clicked = find_creature_at(creatures, mx, my)
                         if selected:
                             selected.selected = False
@@ -111,9 +122,22 @@ def main() -> None:
         is_night = sim_clock.is_night()
 
         for creature in creatures:
-            triggered_need = creature.update(delta, is_night=is_night)
-            if triggered_need:
-                trigger_llm_message(creature, triggered_need)
+            signal = creature.update(delta, is_night=is_night)
+
+            if signal == "reproduce":
+                offspring = creature.spawn_offspring(_next_id())
+                pending_spawn.append(offspring)
+                logger.info(
+                    f"Population: {len(creatures) + len(pending_spawn)} "
+                    f"(+1 from {creature.id})"
+                )
+            elif signal is not None:
+                trigger_llm_message(creature, signal)
+
+        # Incorporar crías al swarm tras el loop de update
+        if pending_spawn:
+            creatures.extend(pending_spawn)
+            pending_spawn.clear()
 
         update_social(creatures, delta)
 
@@ -122,11 +146,11 @@ def main() -> None:
             creatures=creatures,
             selected=selected,
             clock_obj=sim_clock,
-            messages=[],  # placeholder para log global de mensajes
+            delta=delta,
         )
 
     # --- Shutdown ---
-    logger.info("Shutting down, saving state...")
+    logger.info(f"Shutting down. Final population: {len(creatures)}")
     for c in creatures:
         c.save()
     pygame.quit()
@@ -135,3 +159,4 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
+

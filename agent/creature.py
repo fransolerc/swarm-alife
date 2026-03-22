@@ -16,8 +16,10 @@ from agent.memory.concept_node import ConceptNode
 from config import (
     WINDOW_WIDTH, WINDOW_HEIGHT, UI_PANEL_WIDTH,
     CREATURE_SPEED, WANDER_INTERVAL, INTERACTION_RADIUS,
-    LLM_MESSAGE_COOLDOWN, DATA_DIR,
-    CREATURE_RADIUS,
+    LLM_MESSAGE_COOLDOWN, DATA_DIR, CREATURE_RADIUS,
+    REPRODUCTION_MIN_AGE, REPRODUCTION_NEED_THRESHOLD,
+    REPRODUCTION_COOLDOWN, OFFSPRING_NEED_VARIANCE, OFFSPRING_SPAWN_RADIUS,
+    NEED_MIN, NEED_MAX,
 )
 from utils import clamp, normalize, distance, atomic_write_json, load_json, extract_keywords
 
@@ -73,6 +75,11 @@ class Creature:
         self.selected: bool = False
         self.is_eating: bool = False  # animación futura
 
+        # Edad y reproducción
+        self.age: float = 0.0                        # segundos reales de vida
+        self._reproduction_cooldown: float = 0.0     # segundos restantes de cooldown
+        self.generation: int = 0                     # generación (0 = fundadora)
+
         logger.info(f"Creature {self.id} created at ({self.x:.0f}, {self.y:.0f})")
 
     # --- Update principal ---
@@ -83,12 +90,22 @@ class Creature:
 
         delta: segundos reales transcurridos.
         is_night: pasado desde SimClock.
-        Devuelve la necesidad más urgente que supera umbral LLM,
-        o None si no hay nada que comunicar.
+        Devuelve:
+          - nombre de necesidad urgente ("hunger", etc.) si hay que invocar LLM
+          - "reproduce" si la criatura está lista para dividirse
+          - None si no hay nada que comunicar
         """
+        self.age += delta
+        if self._reproduction_cooldown > 0:
+            self._reproduction_cooldown -= delta
+
         self._update_movement(delta)
         triggered_needs = self.needs.update(delta, is_night)
         self._update_message_timer(delta)
+
+        # Reproducción tiene prioridad sobre LLM
+        if self.ready_to_reproduce():
+            return "reproduce"
 
         if triggered_needs:
             return self._check_llm_trigger(triggered_needs)
@@ -189,6 +206,73 @@ class Creature:
         self.needs.sleep()
         self.memory.add_raw("yo", "dormí", "descanso", poignancy=3.0)
 
+    # --- Reproducción ---
+
+    def ready_to_reproduce(self) -> bool:
+        """
+        True si la criatura cumple las condiciones para dividirse:
+        - Edad mínima alcanzada
+        - Cooldown de reproducción expirado
+        - Todas las necesidades por encima del umbral (criatura "sana")
+        """
+        if self.age < REPRODUCTION_MIN_AGE:
+            return False
+        if self._reproduction_cooldown > 0:
+            return False
+        n = self.needs
+        return (
+            n.hunger    <= (100.0 - REPRODUCTION_NEED_THRESHOLD) and  # hunger: bajo es bueno
+            n.hygiene   >= REPRODUCTION_NEED_THRESHOLD and
+            n.happiness >= REPRODUCTION_NEED_THRESHOLD and
+            n.energy    >= REPRODUCTION_NEED_THRESHOLD
+        )
+
+    def spawn_offspring(self, offspring_id: str) -> "Creature":
+        """
+        Crea una cría cerca del padre.
+        El padre entra en cooldown de reproducción.
+        La cría hereda necesidades con varianza y la generación del padre + 1.
+        """
+        import math
+
+        # Posición: radio aleatorio alrededor del padre
+        angle = random.uniform(0, 2 * math.pi)
+        ox = clamp(
+            self.x + math.cos(angle) * OFFSPRING_SPAWN_RADIUS,
+            CREATURE_RADIUS, _AREA_W - CREATURE_RADIUS
+        )
+        oy = clamp(
+            self.y + math.sin(angle) * OFFSPRING_SPAWN_RADIUS,
+            CREATURE_RADIUS, _AREA_H - CREATURE_RADIUS
+        )
+
+        offspring = Creature(offspring_id, x=ox, y=oy)
+        offspring.generation = self.generation + 1
+
+        # Heredar necesidades con varianza
+        offspring.needs.hunger    = clamp(self.needs.hunger    + random.uniform(-OFFSPRING_NEED_VARIANCE, OFFSPRING_NEED_VARIANCE), NEED_MIN, NEED_MAX)
+        offspring.needs.hygiene   = clamp(self.needs.hygiene   + random.uniform(-OFFSPRING_NEED_VARIANCE, OFFSPRING_NEED_VARIANCE), NEED_MIN, NEED_MAX)
+        offspring.needs.happiness = clamp(self.needs.happiness + random.uniform(-OFFSPRING_NEED_VARIANCE, OFFSPRING_NEED_VARIANCE), NEED_MIN, NEED_MAX)
+        offspring.needs.energy    = clamp(self.needs.energy    + random.uniform(-OFFSPRING_NEED_VARIANCE, OFFSPRING_NEED_VARIANCE), NEED_MIN, NEED_MAX)
+
+        # El padre entra en cooldown
+        self._reproduction_cooldown = REPRODUCTION_COOLDOWN
+
+        # Memoria del evento
+        self.memory.add_raw(
+            subject="yo",
+            predicate="me_dividí_en",
+            object_=offspring_id,
+            poignancy=9.0,
+            keywords=["división", "reproducción", offspring_id],
+        )
+
+        logger.info(
+            f"Creature {self.id} (gen {self.generation}) spawned {offspring_id} "
+            f"(gen {offspring.generation}) at ({ox:.0f},{oy:.0f})"
+        )
+        return offspring
+
     # --- Posición ---
 
     @property
@@ -206,11 +290,13 @@ class Creature:
     def save(self) -> None:
         path = os.path.join(DATA_DIR, f"{self.id}.json")
         data = {
-            "id":     self.id,
-            "x":      self.x,
-            "y":      self.y,
-            "needs":  self.needs.to_dict(),
-            "memory": self.memory.to_list(),
+            "id":         self.id,
+            "x":          self.x,
+            "y":          self.y,
+            "age":        self.age,
+            "generation": self.generation,
+            "needs":      self.needs.to_dict(),
+            "memory":     self.memory.to_list(),
         }
         atomic_write_json(path, data)
         logger.debug(f"Creature {self.id}: saved state")
@@ -220,11 +306,13 @@ class Creature:
         data = load_json(path)
         if not data:
             return False
-        self.x = data.get("x", self.x)
-        self.y = data.get("y", self.y)
+        self.x          = data.get("x", self.x)
+        self.y          = data.get("y", self.y)
+        self.age        = data.get("age", 0.0)
+        self.generation = data.get("generation", 0)
         self.needs.from_dict(data.get("needs", {}))
         self.memory.from_list(data.get("memory", []))
-        logger.info(f"Creature {self.id}: loaded state")
+        logger.info(f"Creature {self.id}: loaded state (gen {self.generation}, age {self.age:.0f}s)")
         return True
 
     def __repr__(self) -> str:
