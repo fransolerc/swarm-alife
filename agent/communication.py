@@ -9,7 +9,7 @@ import threading
 from typing import TYPE_CHECKING
 
 from locales import t
-from config import OLLAMA_MODEL, OLLAMA_TIMEOUT, LLM_MAX_TOKENS, LANGUAGE
+from config import OLLAMA_MODEL, LLM_MAX_TOKENS, LANGUAGE
 
 if TYPE_CHECKING:
     from agent.creature import Creature
@@ -25,7 +25,7 @@ def trigger_llm_message(creature: "Creature", need: str) -> None:
     La respuesta se escribe en creature.current_message cuando está lista.
     No bloquea el loop principal de Pygame.
 
-    need: "hunger" | "hygiene" | "happiness" | "energy"
+    Need: "hunger" | "hygiene" | "happiness" | "energy"
     """
     thread = threading.Thread(
         target=_llm_call,
@@ -52,7 +52,6 @@ def _llm_call(creature: "Creature", need: str) -> None:
         )
         memory_context = ""
         if recent_nodes:
-            memory_lines = [f"- {n.to_text()}" for n in recent_nodes]
             if LANGUAGE == "es":
                 memory_context = "Recuerdas: " + "; ".join(
                     n.to_text() for n in recent_nodes
@@ -79,7 +78,7 @@ def _llm_call(creature: "Creature", need: str) -> None:
 
         message = response["message"]["content"].strip()
 
-        # Sanitizar: máx 2 frases, sin saltos de línea
+        # Sanitizar: máx. 2 frases, sin saltos de línea
         message = message.replace("\n", " ").strip()
         if len(message) > 120:
             message = message[:120].rsplit(" ", 1)[0] + "…"

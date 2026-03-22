@@ -12,22 +12,22 @@ setup_logging()
 
 from config import (
     FPS, WINDOW_WIDTH, WINDOW_HEIGHT, WINDOW_TITLE,
-    NUM_CREATURES, UI_PANEL_WIDTH, CREATURE_RADIUS, DATA_DIR, GRID_CELL,
+    NUM_CREATURES, UI_PANEL_WIDTH, CREATURE_RADIUS, DATA_DIR
 )
 from agent.creature import Creature
 from agent.social import update_social
 from agent.communication import trigger_llm_message
 from agent.memory.sim_clock import SimClock
 from world.objects import WorldMap, ObjType
-from world.placement import PlacementMode, PALETTE
+from world.placement import PlacementMode
 from render.renderer import Renderer
 
 logger = logging.getLogger(__name__)
 
 _AREA_W     = WINDOW_WIDTH - UI_PANEL_WIDTH
 _WORLD_FILE = os.path.join(DATA_DIR, "world.json")
-
 _id_counter = 0
+
 
 def _next_id() -> str:
     global _id_counter
@@ -60,12 +60,137 @@ def load_world(world: WorldMap) -> None:
 
 def find_creature_at(creatures: list[Creature], mx: int, my: int) -> Creature | None:
     for c in creatures:
-        dx = c.x - mx
-        dy = c.y - my
-        if (dx*dx + dy*dy) <= (CREATURE_RADIUS + 6) ** 2:
+        dx, dy = c.x - mx, c.y - my
+        if (dx * dx + dy * dy) <= (CREATURE_RADIUS + 6) ** 2:
             return c
     return None
 
+
+# -----------------------------------------------------------------------
+# Input handlers — each handles one category of event
+# -----------------------------------------------------------------------
+
+def _handle_keydown(
+    event: pygame.event.Event,
+    creatures: list[Creature],
+    selected: Creature | None,
+    placement: PlacementMode,
+    world: WorldMap,
+) -> bool:
+    """Returns True if the simulation should quit."""
+    if event.key == pygame.K_ESCAPE:
+        return True
+
+    if event.key in (pygame.K_1, pygame.K_2, pygame.K_3, pygame.K_4):
+        placement.select_by_index(event.key - pygame.K_1)
+        return False
+
+    targets = [selected] if selected else creatures
+    if event.key == pygame.K_f:
+        for c in targets: c.feed()
+    elif event.key == pygame.K_d:
+        for c in targets: c.shower()
+    elif event.key == pygame.K_j:
+        for c in targets: c.play()
+    elif event.key == pygame.K_s:
+        if selected: selected.sleep()
+    elif event.key == pygame.K_g:
+        for c in creatures: c.save()
+        save_world(world)
+        logger.info("State saved manually")
+
+    return False
+
+
+def _handle_left_click(
+    mx: int,
+    my: int,
+    creatures: list[Creature],
+    selected: Creature | None,
+    placement: PlacementMode,
+    world: WorldMap,
+) -> Creature | None:
+    """Handles left click in the world area. Returns the new selected creature."""
+    clicked = find_creature_at(creatures, mx, my)
+    if clicked:
+        if selected: selected.selected = False
+        clicked.selected = True
+        return clicked
+
+    obj = world.get_at_px(mx, my)
+    if obj and obj.type == ObjType.TREE:
+        world.shake_tree_at(mx, my)
+        return selected
+
+    if placement.selected is not None:
+        placement.on_left_click(mx, my)
+        return selected
+
+    if selected:
+        selected.selected = False
+    return None
+
+
+def _handle_mouse_event(
+    event: pygame.event.Event,
+    creatures: list[Creature],
+    selected: Creature | None,
+    placement: PlacementMode,
+    world: WorldMap,
+) -> Creature | None:
+    """Dispatches mouse events. Returns updated selected creature."""
+    mx, my = event.pos
+    in_area = mx < _AREA_W
+
+    if event.type == pygame.MOUSEMOTION:
+        if in_area:
+            placement.on_mouse_move(mx, my)
+        return selected
+
+    if event.type == pygame.MOUSEBUTTONDOWN:
+        if event.button == 1 and in_area:
+            return _handle_left_click(mx, my, creatures, selected, placement, world)
+        if event.button == 3 and in_area:
+            placement.on_right_click(mx, my)
+
+    if event.type == pygame.MOUSEBUTTONUP:
+        if event.button == 1:
+            placement.on_mouse_up(mx, my)
+
+    return selected
+
+
+# -----------------------------------------------------------------------
+# Update
+# -----------------------------------------------------------------------
+
+def _update(
+    creatures: list[Creature],
+    pending_spawn: list[Creature],
+    sim_clock: SimClock,
+    world: WorldMap,
+    delta: float,
+) -> None:
+    sim_clock.update(delta)
+    world.update(delta)
+
+    for creature in creatures:
+        signal = creature.update(delta, is_night=sim_clock.is_night(), world=world)
+        if signal == "reproduce":
+            pending_spawn.append(creature.spawn_offspring(_next_id()))
+        elif signal is not None:
+            trigger_llm_message(creature, signal)
+
+    if pending_spawn:
+        creatures.extend(pending_spawn)
+        pending_spawn.clear()
+
+    update_social(creatures, delta)
+
+
+# -----------------------------------------------------------------------
+# Main loop
+# -----------------------------------------------------------------------
 
 def main() -> None:
     pygame.init()
@@ -82,105 +207,23 @@ def main() -> None:
     pending_spawn: list[Creature] = []
 
     load_world(world)
-    logger.info(f"swarm-alife — {len(creatures)} criatura(s), {len(world)} objeto(s)")
+    logger.info(f"swarm-alife started — {len(creatures)} creature(s), {len(world)} object(s)")
 
     running = True
     while running:
         delta = clock.tick(FPS) / 1000.0
 
-        # ----------------------------------------------------------------
-        # Input
-        # ----------------------------------------------------------------
         for event in pygame.event.get():
             if event.type == pygame.QUIT:
                 running = False
-
             elif event.type == pygame.KEYDOWN:
-                if event.key == pygame.K_ESCAPE:
+                if _handle_keydown(event, creatures, selected, placement, world):
                     running = False
+            elif event.type in (pygame.MOUSEMOTION, pygame.MOUSEBUTTONDOWN, pygame.MOUSEBUTTONUP):
+                selected = _handle_mouse_event(event, creatures, selected, placement, world)
 
-                # Teclas 1-5: seleccionar objeto de paleta
-                elif event.key in (pygame.K_1, pygame.K_2, pygame.K_3,
-                                   pygame.K_4, pygame.K_5):
-                    placement.select_by_index(event.key - pygame.K_1)
+        _update(creatures, pending_spawn, sim_clock, world, delta)
 
-                # Acciones sobre criaturas
-                elif event.key == pygame.K_f:
-                    targets = [selected] if selected else creatures
-                    for c in targets: c.feed()
-                elif event.key == pygame.K_d:
-                    targets = [selected] if selected else creatures
-                    for c in targets: c.shower()
-                elif event.key == pygame.K_j:
-                    targets = [selected] if selected else creatures
-                    for c in targets: c.play()
-                elif event.key == pygame.K_s:
-                    if selected: selected.sleep()
-
-                # Guardar
-                elif event.key == pygame.K_g:
-                    for c in creatures: c.save()
-                    save_world(world)
-                    logger.info("Guardado manual")
-
-            elif event.type == pygame.MOUSEMOTION:
-                mx, my = event.pos
-                if mx < _AREA_W:
-                    placement.on_mouse_move(mx, my)
-
-            elif event.type == pygame.MOUSEBUTTONDOWN:
-                mx, my = event.pos
-                in_area = mx < _AREA_W
-
-                if event.button == 1 and in_area:
-                    # Prioridad 1: clic en criatura → seleccionar
-                    clicked_creature = find_creature_at(creatures, mx, my)
-                    if clicked_creature:
-                        if selected: selected.selected = False
-                        selected = clicked_creature
-                        selected.selected = True
-
-                    # Prioridad 2: clic en árbol → zarandear
-                    elif world.get_at_px(mx, my) and \
-                         world.get_at_px(mx, my).type == ObjType.TREE:
-                        world.shake_tree_at(mx, my)
-
-                    # Prioridad 3: colocar objeto si hay uno seleccionado
-                    elif placement.selected is not None:
-                        placement.on_left_click(mx, my)
-
-                    # Prioridad 4: deseleccionar criatura
-                    else:
-                        if selected:
-                            selected.selected = False
-                            selected = None
-
-                elif event.button == 3 and in_area:
-                    # Clic derecho: borrar objeto
-                    placement.on_right_click(mx, my)
-
-        # ----------------------------------------------------------------
-        # Update
-        # ----------------------------------------------------------------
-        sim_clock.update(delta)
-        world.update(delta)
-
-        for creature in creatures:
-            signal = creature.update(delta, is_night=sim_clock.is_night(), world=world)
-            if signal == "reproduce":
-                pending_spawn.append(creature.spawn_offspring(_next_id()))
-            elif signal is not None:
-                trigger_llm_message(creature, signal)
-
-        if pending_spawn:
-            creatures.extend(pending_spawn)
-            pending_spawn.clear()
-
-        update_social(creatures, delta)
-
-        # ----------------------------------------------------------------
-        # Render
-        # ----------------------------------------------------------------
         renderer.draw_frame(
             creatures=creatures,
             selected=selected,
@@ -190,10 +233,7 @@ def main() -> None:
             delta=delta,
         )
 
-    # ----------------------------------------------------------------
-    # Shutdown
-    # ----------------------------------------------------------------
-    logger.info(f"Cerrando. Población: {len(creatures)}")
+    logger.info(f"Shutting down. Population: {len(creatures)}")
     for c in creatures: c.save()
     save_world(world)
     pygame.quit()

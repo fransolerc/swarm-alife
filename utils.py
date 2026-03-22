@@ -68,15 +68,18 @@ _STOPWORDS_EN = {
 }
 
 
+_PUNCTUATION = ".,;:!?\"'()[]"
+
+
 def extract_keywords(text: str, language: str = "es", max_keywords: int = 8) -> list[str]:
     """Extrae keywords relevantes de un texto eliminando stopwords."""
     stopwords = _STOPWORDS_ES if language == "es" else _STOPWORDS_EN
     words = text.lower().split()
     keywords = [
-        w.strip(".,;:!?\"'()[]")
+        w.strip(_PUNCTUATION)
         for w in words
-        if w.strip(".,;:!?\"'()[]") not in stopwords
-        and len(w.strip(".,;:!?\"'()[]")) > 2
+        if w.strip(_PUNCTUATION) not in stopwords
+        and len(w.strip(_PUNCTUATION)) > 2
     ]
     return keywords[:max_keywords]
 
@@ -95,15 +98,15 @@ def clamp(value: float, min_val: float, max_val: float) -> float:
 
 def random_point_in_rect(x: int, y: int, w: int, h: int) -> tuple[float, float]:
     """Punto aleatorio dentro de un rectángulo."""
-    return (random.uniform(x, x + w), random.uniform(y, y + h))
+    return random.uniform(x, x + w), random.uniform(y, y + h)
 
 
 def normalize(dx: float, dy: float) -> tuple[float, float]:
     """Normaliza un vector (dx, dy). Devuelve (0, 0) si es nulo."""
     length = math.hypot(dx, dy)
     if length == 0:
-        return (0.0, 0.0)
-    return (dx / length, dy / length)
+        return 0.0, 0.0
+    return dx / length, dy / length
 
 
 # --- Logging ---

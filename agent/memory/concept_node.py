@@ -7,7 +7,6 @@
 import time
 import uuid
 from dataclasses import dataclass, field
-from typing import Optional
 
 
 @dataclass
@@ -16,9 +15,9 @@ class ConceptNode:
     Unidad de memoria en formato Sujeto-Predicado-Objeto.
 
     Ejemplos:
-        subject="yo", predicate="siento", object_="hambre"
-        subject="usuario", predicate="me_dio", object_="comida"
-        subject="criatura_3", predicate="estaba_cerca_cuando", object_="yo_lloraba"
+        subject="yo", predícate="siento", object_="hambre"
+        subject="usuario", predícate="me_dio", object_="comida"
+        subject="criatura_3", predícate="estaba_cerca_cuando", object_="yo_lloraba"
     """
     subject:    str
     predicate:  str
@@ -58,7 +57,6 @@ class ConceptNode:
 
     @classmethod
     def from_dict(cls, data: dict) -> "ConceptNode":
-        """Deserialización desde JSON."""
         return cls(
             subject    = data["subject"],
             predicate  = data["predicate"],

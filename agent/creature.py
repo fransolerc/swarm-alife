@@ -7,7 +7,7 @@ import math
 import time
 import logging
 import os
-from typing import Optional, TYPE_CHECKING
+from typing import Optional
 
 from agent.needs import Needs
 from agent.memory.associative_memory import AssociativeMemory
@@ -21,8 +21,6 @@ from config import (
 )
 from utils import clamp, normalize, distance, atomic_write_json, load_json, extract_keywords
 
-if TYPE_CHECKING:
-    from world.objects import WorldMap
 
 logger = logging.getLogger(__name__)
 
@@ -312,7 +310,7 @@ class Creature:
 
     @property
     def pos(self) -> tuple[float, float]:
-        return (self.x, self.y)
+        return self.x, self.y
 
     def distance_to(self, other: "Creature") -> float:
         return distance(self.pos, other.pos)

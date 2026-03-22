@@ -7,7 +7,7 @@
 import logging
 from typing import TYPE_CHECKING
 
-from config import INTERACTION_RADIUS, HUNGER_CRITICAL, ENERGY_CRITICAL
+from config import HUNGER_CRITICAL, ENERGY_CRITICAL
 
 if TYPE_CHECKING:
     from agent.creature import Creature

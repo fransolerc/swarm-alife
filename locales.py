@@ -1,6 +1,6 @@
 # =============================================================================
 # locales.py — swarm-alife
-# Todos los strings visibles centralizados. Sin texto hardcodeado en el código.
+# Todos los strings visibles centralizados. Sin texto hardcode en el código.
 # =============================================================================
 
 from config import LANGUAGE

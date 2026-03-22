@@ -6,7 +6,6 @@ import pygame
 import math
 import random
 import logging
-from typing import Optional, TYPE_CHECKING
 
 from config import (
     WINDOW_WIDTH, WINDOW_HEIGHT, UI_PANEL_WIDTH,
@@ -20,12 +19,6 @@ from config import (
 )
 from locales import t
 from world.objects import ObjType, OBJ_LABEL, WorldObject, GroundItem
-
-if TYPE_CHECKING:
-    from agent.creature import Creature
-    from agent.memory.sim_clock import SimClock
-    from world.objects import WorldMap
-    from world.placement import PlacementMode
 
 logger = logging.getLogger(__name__)
 
@@ -218,7 +211,6 @@ class Renderer:
     def _draw_ground_apple(self, item: GroundItem):
         cx, cy = int(item.x), int(item.y)
         # Se pone más oscura al pudrirse
-        fade = 1.0 - (item.age / item.age.__class__(30.0) if item.age > 0 else 0)
         from world.objects import APPLE_ROT_TIME
         fade  = max(0.2, 1.0 - item.age / APPLE_ROT_TIME * 0.7)
         red   = int(180 * fade)

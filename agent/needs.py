@@ -29,10 +29,10 @@ class Needs:
     Estado interno de necesidades de una criatura.
 
     Convención:
-    - hunger:    0 = saciada, 100 = hambrienta al límite
-    - hygiene:   0 = sucia, 100 = limpia
+    - hunger: 0 = saciada, 100 = hambrienta al límite
+    - hygiene: 0 = sucia, 100 = limpia
     - happiness: 0 = miserable, 100 = muy feliz
-    - energy:    0 = agotada, 100 = descansada
+    - energy: 0 = agotada, 100 = descansada
     """
     hunger:    float = field(default_factory=lambda: _initial(HUNGER_INITIAL))
     hygiene:   float = field(default_factory=lambda: _initial(HYGIENE_INITIAL))

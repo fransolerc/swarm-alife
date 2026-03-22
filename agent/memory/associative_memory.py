@@ -66,11 +66,11 @@ class AssociativeMemory:
         if not query_keywords:
             return self._top_by_poignancy(top_k)
 
-        query_set = set(kw.lower() for kw in query_keywords)
+        query_set = {kw.lower() for kw in query_keywords}
 
         scored = []
         for node in self._nodes:
-            node_kw_set = set(kw.lower() for kw in node.keywords)
+            node_kw_set = {kw.lower() for kw in node.keywords}
             # También buscamos en el texto SPO directamente
             spo_words = set(
                 f"{node.subject} {node.predicate} {node.object_}".lower().split()
@@ -96,7 +96,7 @@ class AssociativeMemory:
         return [n.to_dict() for n in self._nodes]
 
     def from_list(self, data: list[dict]) -> None:
-        """Carga nodos desde lista de dicts (deserialización JSON)."""
+        """Carga nodos desde lista de dicts (deserialization JSON)."""
         self._nodes = [ConceptNode.from_dict(d) for d in data]
         logger.info(f"AssociativeMemory: loaded {len(self._nodes)} nodes")
 

@@ -35,8 +35,8 @@ class SimClock:
 
     Uso:
         clock = SimClock()
-        clock.update()       # llamar cada frame
-        clock.time_str()     # → "14:32"
+        clock.update() # llamar cada frame
+        clock.time_str() # → "14:32"
         clock.period()       # → "tarde"
         clock.sim_seconds    # segundos totales simulados transcurridos
     """
