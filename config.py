@@ -1,0 +1,115 @@
+# =============================================================================
+# config.py — Thronglets / swarm-alife
+# Todas las constantes del sistema. Sin hardcoding fuera de este fichero.
+# =============================================================================
+
+# --- General ---
+LANGUAGE = "es"           # "es" | "en"
+FPS = 60
+WINDOW_WIDTH = 1280
+WINDOW_HEIGHT = 720
+WINDOW_TITLE = "swarm-alife"
+
+# --- Simulación ---
+NUM_CREATURES = 10        # Número inicial de criaturas
+SIM_SPEED = 1.0           # Multiplicador de velocidad de simulación (1.0 = tiempo real)
+
+# --- Criaturas: movimiento ---
+CREATURE_RADIUS = 18      # Radio visual (píxeles)
+CREATURE_SPEED = 60       # Píxeles por segundo
+WANDER_INTERVAL = (2.0, 5.0)   # Segundos entre cambios de dirección (min, max)
+INTERACTION_RADIUS = 80   # Radio de influencia social entre criaturas
+
+# --- Sistema de necesidades ---
+# Valores: 0.0 (mínimo) — 100.0 (máximo)
+
+NEED_MAX = 100.0
+NEED_MIN = 0.0
+
+# Tasas de cambio pasivo (unidades por segundo de simulación)
+HUNGER_RATE       =  1.2   # Aumenta con el tiempo
+HYGIENE_RATE      = -0.8   # Disminuye con el tiempo
+HAPPINESS_RATE    = -0.5   # Disminuye con el tiempo
+ENERGY_RATE       = -0.6   # Disminuye con actividad
+
+# Valores iniciales (con varianza para que no arranquen sincronizadas)
+NEED_INITIAL_VARIANCE = 20.0  # ±N sobre el valor base
+
+HUNGER_INITIAL    = 30.0
+HYGIENE_INITIAL   = 80.0
+HAPPINESS_INITIAL = 70.0
+ENERGY_INITIAL    = 80.0
+
+# Umbrales de comunicación: dispara invocación LLM
+HUNGER_LLM_THRESHOLD    = 75.0
+HYGIENE_LLM_THRESHOLD   = 25.0
+HAPPINESS_LLM_THRESHOLD = 20.0
+ENERGY_LLM_THRESHOLD    = 15.0
+
+# Umbrales críticos: cambia comportamiento visible
+HUNGER_CRITICAL    = 85.0
+HYGIENE_CRITICAL   = 15.0
+HAPPINESS_CRITICAL = 10.0
+ENERGY_CRITICAL    = 10.0
+
+# Cooldown mínimo entre mensajes LLM por criatura (segundos reales)
+LLM_MESSAGE_COOLDOWN = 30.0
+
+# --- Comportamiento social ---
+# Contagio: cuánto afecta el estado de un vecino al propio
+CONTAGION_HUNGER_RATE    = 0.05   # Por segundo, si vecino tiene hambre crítica
+CONTAGION_ANXIETY_RATE   = 0.03   # Por segundo, contagio de ansiedad (baja happiness)
+
+# Confort por proximidad
+PROXIMITY_HAPPINESS_BONUS = 0.2   # Por segundo si hay ≥1 vecino cerca
+
+# Competencia por recursos
+FOOD_SOURCE_CAPACITY = 3          # Máx criaturas comiendo a la vez
+TENSION_QUEUE_RATE   = 0.1        # Happiness baja si hay cola en la fuente
+
+# --- Interacciones del usuario ---
+FEED_HUNGER_REDUCTION   = 40.0
+SHOWER_HYGIENE_RESTORE  = 50.0
+PLAY_HAPPINESS_BONUS    = 30.0
+PLAY_ENERGY_COST        = 15.0
+SLEEP_ENERGY_RESTORE    = 60.0
+
+# --- Memoria ---
+MAX_ASSOCIATIVE_NODES = 100
+
+# --- LLM ---
+OLLAMA_MODEL   = "llama3.2:3b"
+OLLAMA_TIMEOUT = 10           # Segundos máximos esperando respuesta
+LLM_MAX_TOKENS = 80           # Respuestas cortas, solo comunicación
+
+# --- Tiempo simulado ---
+# 1 minuto real = SIM_MINUTES_PER_REAL_MINUTE minutos simulados
+SIM_MINUTES_PER_REAL_MINUTE = 60   # 1 hora simulada por minuto real
+
+# --- Rendering ---
+UI_PANEL_WIDTH    = 260       # Ancho del panel de estado derecho
+SPRITE_SIZE       = 36        # Tamaño del sprite en píxeles
+NEED_BAR_WIDTH    = 40
+NEED_BAR_HEIGHT   = 5
+NEED_BAR_OFFSET_Y = 24        # Distancia por debajo del centro de la criatura
+
+# --- Rutas ---
+DATA_DIR = "data"             # Directorio de memoria persistente por criatura
+ASSETS_DIR = "assets"
+SPRITES_DIR = f"{ASSETS_DIR}/sprites"
+
+# --- Colores (RGB) ---
+COLOR_BG         = (30, 30, 40)
+COLOR_CREATURE   = (120, 200, 140)
+COLOR_SELECTED   = (255, 220, 50)
+COLOR_CRITICAL   = (220, 60, 60)
+COLOR_UI_BG      = (20, 20, 30)
+COLOR_UI_TEXT    = (200, 200, 210)
+COLOR_NEED_BAR_BG = (60, 60, 70)
+COLOR_HUNGER_BAR  = (230, 120, 50)
+COLOR_HYGIENE_BAR = (80, 180, 220)
+COLOR_HAPPINESS_BAR = (240, 200, 60)
+COLOR_ENERGY_BAR  = (100, 220, 160)
+COLOR_FOOD_SOURCE = (180, 230, 100)
+COLOR_MESSAGE_BG  = (40, 40, 55)
+COLOR_MESSAGE_TEXT = (220, 240, 200)
