@@ -1,5 +1,5 @@
 # =============================================================================
-# config.py — Thronglets / swarm-alife
+# config.py — swarm-alife
 # Todas las constantes del sistema. Sin hardcoding fuera de este fichero.
 # =============================================================================
 
@@ -131,11 +131,22 @@ PLACEMENT_HOVER_COLOR   = (144, 224, 112)
 PLACEMENT_BLOCKED_COLOR = (200, 80,  60)
 
 # --- Rendering ---
-UI_PANEL_WIDTH    = 260       # Ancho del panel de estado derecho
-SPRITE_SIZE       = 36        # Tamaño del sprite en píxeles
+TOOLBAR_HEIGHT    = 82        # Altura de la barra de herramientas inferior
+UI_PANEL_WIDTH    = 0         # Deprecated — mantenido por compatibilidad, no usar
+SPRITE_SIZE       = 36
 NEED_BAR_WIDTH    = 40
 NEED_BAR_HEIGHT   = 5
-NEED_BAR_OFFSET_Y = 24        # Distancia por debajo del centro de la criatura
+NEED_BAR_OFFSET_Y = 24
+
+# Toolbar — estilo madera
+TOOLBAR_WOOD_DARK  = (90,  58,  24)
+TOOLBAR_WOOD_MID   = (184, 137, 74)
+TOOLBAR_WOOD_LIGHT = (212, 168, 96)
+TOOLBAR_WOOD_EDGE  = (232, 196, 120)
+TOOLBAR_BTN_DARK   = (138, 96,  48)
+TOOLBAR_BTN_SEL    = (200, 160, 80)
+TOOLBAR_BTN_SEL_EDGE = (255, 224, 128)
+TOOLBAR_TEXT       = (58,  32,  10)
 
 # --- Rutas ---
 DATA_DIR = "data"             # Directorio de memoria persistente por criatura

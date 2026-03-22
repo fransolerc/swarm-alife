@@ -12,7 +12,7 @@ from typing import Optional
 from agent.needs import Needs
 from agent.memory.associative_memory import AssociativeMemory
 from config import (
-    WINDOW_WIDTH, WINDOW_HEIGHT, UI_PANEL_WIDTH,
+    WINDOW_WIDTH, WINDOW_HEIGHT, TOOLBAR_HEIGHT,
     CREATURE_SPEED, WANDER_INTERVAL, INTERACTION_RADIUS,
     LLM_MESSAGE_COOLDOWN, DATA_DIR, CREATURE_RADIUS,
     REPRODUCTION_MIN_AGE, REPRODUCTION_NEED_THRESHOLD,
@@ -24,8 +24,8 @@ from utils import clamp, normalize, distance, atomic_write_json, load_json, extr
 
 logger = logging.getLogger(__name__)
 
-_AREA_W = WINDOW_WIDTH - UI_PANEL_WIDTH
-_AREA_H = WINDOW_HEIGHT
+_AREA_W = WINDOW_WIDTH
+_AREA_H = WINDOW_HEIGHT - TOOLBAR_HEIGHT
 
 
 class Creature:
@@ -307,6 +307,16 @@ class Creature:
     # ------------------------------------------------------------------
     # Posición
     # ------------------------------------------------------------------
+
+    @property
+    def target_obj(self):
+        """World object the creature is currently heading towards."""
+        return self._target_obj
+
+    @property
+    def using_obj(self) -> bool:
+        """True while the creature is actively using an object."""
+        return self._using_obj
 
     @property
     def pos(self) -> tuple[float, float]:

@@ -12,7 +12,8 @@ setup_logging()
 
 from config import (
     FPS, WINDOW_WIDTH, WINDOW_HEIGHT, WINDOW_TITLE,
-    NUM_CREATURES, UI_PANEL_WIDTH, CREATURE_RADIUS, DATA_DIR
+    NUM_CREATURES, CREATURE_RADIUS, DATA_DIR,
+    TOOLBAR_HEIGHT,
 )
 from agent.creature import Creature
 from agent.social import update_social
@@ -24,7 +25,8 @@ from render.renderer import Renderer
 
 logger = logging.getLogger(__name__)
 
-_AREA_W     = WINDOW_WIDTH - UI_PANEL_WIDTH
+_AREA_W  = WINDOW_WIDTH
+_WORLD_H = WINDOW_HEIGHT - TOOLBAR_HEIGHT
 _WORLD_FILE = os.path.join(DATA_DIR, "world.json")
 _id_counter = 0
 
@@ -82,8 +84,7 @@ def _handle_keydown(
         return True
 
     if event.key in (pygame.K_1, pygame.K_2, pygame.K_3, pygame.K_4):
-        placement.select_by_index(event.key - pygame.K_1)
-        return False
+        return False  # selection handled via drag from palette
 
     targets = [selected] if selected else creatures
     if event.key == pygame.K_f:
@@ -122,7 +123,7 @@ def _handle_left_click(
         world.shake_tree_at(mx, my)
         return selected
 
-    if placement.selected is not None:
+    if placement.drag_type is not None:
         placement.on_left_click(mx, my)
         return selected
 
@@ -140,7 +141,7 @@ def _handle_mouse_event(
 ) -> Creature | None:
     """Dispatches mouse events. Returns updated selected creature."""
     mx, my = event.pos
-    in_area = mx < _AREA_W
+    in_area = mx < _AREA_W and my < _WORLD_H
 
     if event.type == pygame.MOUSEMOTION:
         if in_area:
@@ -148,14 +149,18 @@ def _handle_mouse_event(
         return selected
 
     if event.type == pygame.MOUSEBUTTONDOWN:
-        if event.button == 1 and in_area:
-            return _handle_left_click(mx, my, creatures, selected, placement, world)
+        if event.button == 1:
+            # Intentar iniciar drag desde la paleta (panel lateral)
+            if placement.on_mouse_down(mx, my):
+                return selected
+            # Si no hay drag, manejar clic en el mundo
+            if in_area:
+                return _handle_left_click(mx, my, creatures, selected, placement, world)
         if event.button == 3 and in_area:
             placement.on_right_click(mx, my)
 
-    if event.type == pygame.MOUSEBUTTONUP:
-        if event.button == 1:
-            placement.on_mouse_up(mx, my)
+    if event.type == pygame.MOUSEBUTTONUP and event.button == 1:
+        placement.on_mouse_up(mx, my)
 
     return selected
 
