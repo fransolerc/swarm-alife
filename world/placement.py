@@ -1,16 +1,9 @@
 # =============================================================================
 # world/placement.py — swarm-alife
-# Drag & drop desde la paleta del panel lateral al mundo.
-#
-# Flujo:
-#   1. MOUSEBUTTONDOWN sobre un chip de la paleta → inicia drag
-#   2. MOUSEMOTION → actualiza posición del ghost + celda hover
-#   3. MOUSEBUTTONUP sobre el mundo → coloca el objeto
-#   4. MOUSEBUTTONUP fuera del mundo (o ESC) → cancela
-#
-# Clic derecho en mundo → borra objeto
+# Paleta: objetos para colocar (drag & drop) + herramientas (clic directo).
 # =============================================================================
 
+from enum import Enum, auto
 from typing import Optional
 from world.objects import ObjType, WorldMap
 from config import GRID_CELL, WINDOW_WIDTH, WINDOW_HEIGHT, TOOLBAR_HEIGHT
@@ -19,10 +12,11 @@ _AREA_W  = WINDOW_WIDTH
 _WORLD_H = WINDOW_HEIGHT - TOOLBAR_HEIGHT
 
 # X de inicio de la paleta — calculado igual que en renderer
-_BTN_BIG_SIZE = 58
-_BTN_GAP      = 6
-_PALETTE_TOTAL_W = len([1,2,3,4]) * (_BTN_BIG_SIZE + _BTN_GAP) - _BTN_GAP + 16
-_PANEL_X = WINDOW_WIDTH - _PALETTE_TOTAL_W - 8
+_BTN_BIG_SIZE    = 58
+_BTN_GAP         = 6
+_PALETTE_N_ITEMS = 5   # 4 objetos + 1 herramienta (hacha)
+_PALETTE_TOTAL_W = _PALETTE_N_ITEMS * (_BTN_BIG_SIZE + _BTN_GAP) - _BTN_GAP + 16
+_PANEL_X         = WINDOW_WIDTH - _PALETTE_TOTAL_W - 8
 
 PALETTE: list[ObjType] = [
     ObjType.TREE,
@@ -31,16 +25,16 @@ PALETTE: list[ObjType] = [
     ObjType.BED,
 ]
 
-# Geometría de los chips en el panel (calculada igual que en renderer)
-_CHIP_H   = 32
-_CHIP_GAP = 4
-_CHIP_Y0  = 0   # se calcula en runtime — ver get_chip_rects()
+
+class ToolMode(Enum):
+    NONE = auto()
+    AXE  = auto()
 
 
 def get_chip_rects(palette_x: int, y_start: int) -> list[tuple[int,int,int,int]]:
     """
-    Devuelve [(x, y, w, h), ...] para cada chip de la paleta.
-    Los chips ahora son horizontales en la barra inferior.
+    Devuelve [(x,y,w,h), ...] para cada chip de la paleta.
+    Incluye los chips de objetos + el chip de herramienta (hacha).
     """
     from config import TOOLBAR_HEIGHT
     btn_size = 58
@@ -49,50 +43,68 @@ def get_chip_rects(palette_x: int, y_start: int) -> list[tuple[int,int,int,int]]
     rects    = []
     x = palette_x + 8
     y = y_start
+    # Chips de objetos
     for _ in PALETTE:
         rects.append((x, y, btn_size, h))
         x += btn_size + gap
+    # Chip de hacha
+    rects.append((x, y, btn_size, h))
     return rects
 
 
 class PlacementMode:
-    """Estado del drag & drop de objetos."""
+    """Estado de la paleta: drag & drop para objetos, clic para herramientas."""
 
     def __init__(self, world: WorldMap):
         self._world = world
 
-        # Chip y_start: el renderer lo actualiza cada frame
-        self.palette_y_start: int = 200   # valor inicial conservador
+        # y_start de la paleta: el renderer lo actualiza cada frame
+        self.palette_y_start: int = 200
 
-        # Estado drag
-        self.dragging:     bool            = False
-        self.drag_type:    Optional[ObjType] = None
-        self.drag_x:       int             = 0    # posición actual del cursor
-        self.drag_y:       int             = 0
+        # Estado drag (objetos)
+        self.dragging:  bool             = False
+        self.drag_type: Optional[ObjType]= None
+        self.drag_x:    int              = 0
+        self.drag_y:    int              = 0
 
-        # Hover de celda (solo mientras arrastra sobre el mundo)
-        self.hover_col:    int             = 0
-        self.hover_row:    int             = 0
-        self.hover_valid:  bool            = False   # True = está sobre el mundo
+        # Hover de celda
+        self.hover_col:   int  = 0
+        self.hover_row:   int  = 0
+        self.hover_valid: bool = False
+
+        # Herramienta activa
+        self.tool: ToolMode = ToolMode.NONE
 
     # ---------------------------------------------------------------
-    # Eventos — llamados desde main.py
+    # Eventos
     # ---------------------------------------------------------------
 
     def on_mouse_down(self, mx: int, my: int) -> bool:
         """
-        Intenta iniciar drag si el clic está sobre un chip de la paleta.
-        Devuelve True si se inició drag.
+        Intenta iniciar drag si el clic cae sobre un chip de objeto,
+        o activa/desactiva la herramienta si cae sobre el chip de hacha.
+        Devuelve True si se consumió el evento.
         """
         rects = get_chip_rects(_PANEL_X, self.palette_y_start)
-        for i, (rx, ry, rw, rh) in enumerate(rects):
+
+        # Chips de objetos (0..len(PALETTE)-1)
+        for i, (rx, ry, rw, rh) in enumerate(rects[:len(PALETTE)]):
             if rx <= mx <= rx + rw and ry <= my <= ry + rh:
+                self.tool      = ToolMode.NONE   # desactivar hacha al coger objeto
                 self.dragging  = True
                 self.drag_type = PALETTE[i]
                 self.drag_x    = mx
                 self.drag_y    = my
                 self._update_hover(mx, my)
                 return True
+
+        # Chip de hacha
+        axe_rect = rects[len(PALETTE)]
+        rx, ry, rw, rh = axe_rect
+        if rx <= mx <= rx + rw and ry <= my <= ry + rh:
+            self.tool = ToolMode.NONE if self.tool == ToolMode.AXE else ToolMode.AXE
+            return True
+
         return False
 
     def on_mouse_move(self, mx: int, my: int) -> None:
@@ -102,10 +114,7 @@ class PlacementMode:
             self._update_hover(mx, my)
 
     def on_mouse_up(self) -> bool:
-        """
-        Suelta el objeto. Si está sobre el mundo, lo coloca.
-        Devuelve True si se colocó.
-        """
+        """Suelta el objeto. Devuelve True si se colocó."""
         if not self.dragging:
             return False
         placed = self._world.place(self.drag_type, self.hover_col, self.hover_row) \
@@ -117,7 +126,7 @@ class PlacementMode:
         self._cancel()
 
     def on_right_click(self, mx: int, my: int) -> bool:
-        """Borra el objeto en la celda bajo el cursor."""
+        """Borra el objeto en la celda."""
         if mx >= _AREA_W:
             return False
         col = mx // GRID_CELL
@@ -132,7 +141,6 @@ class PlacementMode:
         return self._world.get_at(self.hover_col, self.hover_row) is not None
 
     def hover_snap_px(self) -> tuple[int, int]:
-        """Posición en píxeles de la celda hover (centro)."""
         return (
             self.hover_col * GRID_CELL + GRID_CELL // 2,
             self.hover_row * GRID_CELL + GRID_CELL // 2,

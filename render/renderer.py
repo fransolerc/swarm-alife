@@ -20,7 +20,6 @@ from config import (
 )
 from world.objects import ObjType, OBJ_LABEL, WorldObject
 
-
 logger = logging.getLogger(__name__)
 
 _WORLD_H = WINDOW_HEIGHT - TOOLBAR_HEIGHT   # altura del área de juego
@@ -126,7 +125,7 @@ class Renderer:
         self._draw_creatures(creatures)
 
         # Toolbar
-        self._draw_toolbar(selected, clock_obj, placement)
+        self._draw_toolbar(selected, clock_obj, placement, world.wood)
 
         # Contador de población (sobre el mundo, esquina superior izquierda)
         self._draw_population_badge(len(creatures))
@@ -163,7 +162,11 @@ class Renderer:
             self._draw_object(obj, cx, cy)
 
     def _draw_object(self, obj: WorldObject, cx: int, cy: int):
-        if   obj.type == ObjType.TREE: self._draw_tree(cx, cy, obj.apple_count if obj.has_apples else -1)
+        if obj.type == ObjType.TREE:
+            if obj.chopped:
+                self._draw_stump(cx, cy)
+            else:
+                self._draw_tree(cx, cy, obj.apple_count if obj.has_apples else -1)
         elif obj.type == ObjType.BATH: self._draw_bath(cx, cy)
         elif obj.type == ObjType.BALL: self._draw_ball(cx, cy)
         elif obj.type == ObjType.BED:  self._draw_bed(cx, cy)
@@ -183,6 +186,17 @@ class Renderer:
                 _ci(self.screen, (200,50,40), cx+ax, cy+ay, 4)
                 _ci(self.screen, (230,80,60), cx+ax-1, cy+ay-1, 2)
                 pygame.draw.line(self.screen, (80,120,40), (cx+ax, cy+ay-4), (cx+ax+2, cy+ay-7), 1)
+
+    def _draw_stump(self, cx, cy):
+        s = pygame.Surface((28, 8), pygame.SRCALPHA)
+        pygame.draw.ellipse(s, (0,0,0,40), (0,0,28,8))
+        self.screen.blit(s, (cx-14, cy+8))
+        pygame.draw.rect(self.screen, (90, 55, 28), (cx-8, cy-2, 16, 12), border_radius=3)
+        _el(self.screen, (110, 72, 38), cx, cy-2, 8, 5)
+        _el(self.screen, (125, 85, 48), cx, cy-2, 5, 3)
+        _el(self.screen, (140, 100, 58), cx, cy-2, 2, 1)
+        pygame.draw.line(self.screen, (80, 50, 24), (cx-8, cy+8), (cx-13, cy+13), 2)
+        pygame.draw.line(self.screen, (80, 50, 24), (cx+8, cy+8), (cx+13, cy+13), 2)
 
     def _draw_bath(self, cx, cy):
         s = pygame.Surface((40,10), pygame.SRCALPHA)
@@ -406,13 +420,13 @@ class Renderer:
     # TOOLBAR — barra inferior estilo madera
     # ---------------------------------------------------------------
 
-    def _draw_toolbar(self, selected, clock_obj, placement):
+    def _draw_toolbar(self, selected, clock_obj, placement, wood: int = 0):
         pygame.draw.rect(self.screen, TOOLBAR_WOOD_DARK,
                          (0, _TOOLBAR_Y, WINDOW_WIDTH, TOOLBAR_HEIGHT))
         pygame.draw.line(self.screen, TOOLBAR_WOOD_EDGE,
                          (0, _TOOLBAR_Y), (WINDOW_WIDTH, _TOOLBAR_Y), 2)
         self._draw_info_panel(selected)
-        self._draw_palette_toolbar(placement)
+        self._draw_palette_toolbar(placement, wood)
         time_str = f"{clock_obj.time_str()}  {clock_obj.period()}"
         ts = self.font_small.render(time_str, True, TOOLBAR_WOOD_LIGHT)
         self.screen.blit(ts, (WINDOW_WIDTH//2 - ts.get_width()//2, _TOOLBAR_Y + 4))
@@ -475,19 +489,18 @@ class Renderer:
         _ci(self.screen, (255,255,255), cx+5, cy-3, 1.5)
 
 
-    def _draw_palette_toolbar(self, placement):
-        from world.placement import PALETTE
+    def _draw_palette_toolbar(self, placement, wood: int = 0):
+        from world.placement import PALETTE, ToolMode
 
-        total_w = len(PALETTE) * (_BTN_BIG_SIZE + _BTN_GAP) - _BTN_GAP + 16
-        px = WINDOW_WIDTH - total_w - 8
-        py = _TOOLBAR_Y + 6
-        ph = TOOLBAR_HEIGHT - 12
+        n_items   = len(PALETTE) + 1   # objetos + hacha
+        total_w   = n_items * (_BTN_BIG_SIZE + _BTN_GAP) - _BTN_GAP + 16
+        px        = WINDOW_WIDTH - total_w - 8
+        py        = _TOOLBAR_Y + 6
+        ph        = TOOLBAR_HEIGHT - 12
 
-        # Fondo panel
         _rnd_rect(self.screen, TOOLBAR_WOOD_MID, px, py, total_w, ph, 6)
         _rnd_rect(self.screen, TOOLBAR_WOOD_EDGE, px, py, total_w, ph, 6, 1)
 
-        # Registrar y_start para hit-testing del drag
         placement.palette_y_start = py
 
         bx = px + 8
@@ -496,9 +509,27 @@ class Renderer:
             self._draw_palette_btn(obj_type, bx, py+4, _BTN_BIG_SIZE, ph-8, is_dragging)
             bx += _BTN_BIG_SIZE + _BTN_GAP
 
+        # Botón hacha
+        axe_active = placement.tool == ToolMode.AXE
+        self._draw_axe_btn(bx, py+4, _BTN_BIG_SIZE, ph-8, axe_active)
+
         # Ghost del objeto arrastrado
         if placement.dragging and placement.drag_type is not None:
             self._draw_drag_ghost(placement)
+
+        # Contador de madera (a la izquierda del panel paleta)
+        if wood > 0:
+            wood_x = px - 56
+            wood_y = py + ph//2 - 10
+            _rnd_rect(self.screen, TOOLBAR_WOOD_MID, wood_x, wood_y, 50, 20, 4)
+            _rnd_rect(self.screen, TOOLBAR_WOOD_EDGE, wood_x, wood_y, 50, 20, 4, 1)
+            # Icono madera (rectángulo marrón pequeño)
+            pygame.draw.rect(self.screen, (139, 94, 60),
+                             (wood_x+4, wood_y+4, 12, 12), border_radius=2)
+            pygame.draw.rect(self.screen, (107, 66, 38),
+                             (wood_x+4, wood_y+4, 12, 12), 1, border_radius=2)
+            ws = self.font_small.render(str(wood), True, TOOLBAR_TEXT)
+            self.screen.blit(ws, (wood_x + 20, wood_y + 4))
 
     def _draw_palette_btn(self, obj_type, bx, by, bw, bh, is_dragging):
         bg  = TOOLBAR_BTN_SEL  if is_dragging else TOOLBAR_BTN_DARK
@@ -516,6 +547,24 @@ class Renderer:
         # Label
         label = OBJ_LABEL.get(obj_type, obj_type.name)
         ls = self.font_tiny.render(label, True, TOOLBAR_TEXT)
+        self.screen.blit(ls, (bx + bw//2 - ls.get_width()//2, by + bh - 13))
+
+    def _draw_axe_btn(self, bx, by, bw, bh, active):
+        bg  = TOOLBAR_BTN_SEL      if active else TOOLBAR_BTN_DARK
+        bdr = TOOLBAR_BTN_SEL_EDGE if active else TOOLBAR_WOOD_LIGHT
+        lw  = 2 if active else 1
+        _rnd_rect(self.screen, bg,  bx, by, bw, bh, 5)
+        _rnd_rect(self.screen, bdr, bx, by, bw, bh, 5, lw)
+        # Icono hacha
+        cx, cy = bx + bw//2, by + bh//2 - 4
+        # Mango
+        pygame.draw.line(self.screen, (139, 94, 60), (cx-8, cy+12), (cx+6, cy-4), 3)
+        # Hoja del hacha
+        pts = [(cx+2, cy-8), (cx+12, cy-4), (cx+8, cy+4), (cx-2, cy+2)]
+        pygame.draw.polygon(self.screen, (180, 190, 200), pts)
+        pygame.draw.polygon(self.screen, (140, 150, 160), pts, 1)
+        # Label
+        ls = self.font_tiny.render("hacha", True, TOOLBAR_TEXT)
         self.screen.blit(ls, (bx + bw//2 - ls.get_width()//2, by + bh - 13))
 
     def _draw_object_icon(self, obj_type, cx, cy):
@@ -551,7 +600,7 @@ class Renderer:
         if obj_type is None:
             return
 
-        # Si está sobre el mundo, snapping a celda
+        # Sí está sobre el mundo, snapping a celda
         if placement.hover_valid and my < _WORLD_H:
             snap_x = placement.hover_col * GRID_CELL + GRID_CELL//2
             snap_y = placement.hover_row * GRID_CELL + GRID_CELL//2

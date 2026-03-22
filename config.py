@@ -125,6 +125,10 @@ BED_ENERGY_RESTORE     = 65.0
 # Cooldown por objeto: segundos entre usos consecutivos por la misma criatura
 OBJECT_USE_COOLDOWN = 8.0
 
+# --- Tala de árboles ---
+STUMP_DURATION      = 15.0   # segundos que permanece el tocón antes de desaparecer
+WOOD_PER_TREE       = 2      # unidades de madera por árbol talado
+
 # --- Modo colocación ---
 PLACEMENT_GRID_COLOR    = (58,  82,  40)
 PLACEMENT_HOVER_COLOR   = (144, 224, 112)

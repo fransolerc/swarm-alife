@@ -20,7 +20,7 @@ from agent.social import update_social
 from agent.communication import trigger_llm_message
 from agent.memory.sim_clock import SimClock
 from world.objects import WorldMap, ObjType
-from world.placement import PlacementMode
+from world.placement import PlacementMode, ToolMode
 from render.renderer import Renderer
 
 logger = logging.getLogger(__name__)
@@ -76,6 +76,7 @@ def _handle_keydown(
     event: pygame.event.Event,
     creatures: list[Creature],
     selected: Creature | None,
+    placement: PlacementMode,
     world: WorldMap,
 ) -> bool:
     """Returns True if the simulation should quit."""
@@ -117,14 +118,18 @@ def _handle_left_click(
         clicked.selected = True
         return clicked
 
+    # Hacha activa: talar árbol
+    if placement.tool == ToolMode.AXE:
+        world.chop_tree_at(mx, my)
+        return selected
+
     obj = world.get_at_px(mx, my)
     if obj and obj.type == ObjType.TREE:
         world.shake_tree_at(mx, my)
         return selected
 
     if placement.drag_type is not None:
-        placement.on_left_click(mx, my)
-        return selected
+        return selected  # el drag ya se gestiona en on_mouse_down/on_mouse_up
 
     if selected:
         selected.selected = False
@@ -221,7 +226,7 @@ def main() -> None:
             if event.type == pygame.QUIT:
                 running = False
             elif event.type == pygame.KEYDOWN:
-                if _handle_keydown(event, creatures, selected, world):
+                if _handle_keydown(event, creatures, selected, placement, world):
                     running = False
             elif event.type in (pygame.MOUSEMOTION, pygame.MOUSEBUTTONDOWN, pygame.MOUSEBUTTONUP):
                 selected = _handle_mouse_event(event, creatures, selected, placement, world)

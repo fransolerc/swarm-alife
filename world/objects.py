@@ -13,6 +13,7 @@ from config import (
     GRID_CELL, OBJECT_USE_RANGE, OBJECT_USE_COOLDOWN,
     BATH_HYGIENE_RESTORE, BALL_HAPPINESS_BONUS, BALL_ENERGY_COST, BED_ENERGY_RESTORE,
     WINDOW_WIDTH, WINDOW_HEIGHT, UI_PANEL_WIDTH,
+    STUMP_DURATION, WOOD_PER_TREE,
 )
 from utils import distance, clamp
 
@@ -29,14 +30,14 @@ APPLE_ROT_TIME      = 30.0
 APPLE_PICK_RANGE    = 28.0
 APPLE_HUNGER_VALUE  = 30.0
 SHAKE_COOLDOWN      = 8.0
-APPLE_TREE_CHANCE   = 0.6    # probabilidad de que un árbol nuevo tenga manzanas
+APPLE_TREE_CHANCE   = 0.6
 
 
 class ObjType(Enum):
-    TREE  = auto()   # bloquea paso, puede tener manzanas
-    BATH  = auto()   # restaura higiene
-    BALL  = auto()   # aumenta felicidad
-    BED   = auto()   # restaura energía
+    TREE  = auto()
+    BATH  = auto()
+    BALL  = auto()
+    BED   = auto()
 
 
 OBJ_NEED: dict[ObjType, Optional[str]] = {
@@ -92,6 +93,10 @@ class WorldObject:
     _shake_cd:     float = field(default=0.0,            repr=False)
     shake_t:       float = field(default=0.0,            repr=False)
 
+    # Tala
+    chopped:       bool  = field(default=False,          repr=False)
+    stump_timer:   float = field(default=0.0,            repr=False)
+
     def __post_init__(self):
         if self.type == ObjType.TREE and self.has_apples:
             self.apple_count = APPLE_MAX_PER_TREE
@@ -110,7 +115,7 @@ class WorldObject:
 
     @property
     def blocks_path(self) -> bool:
-        return self.type == ObjType.TREE
+        return self.type == ObjType.TREE  # tocón también bloquea mientras existe
 
     @property
     def need(self) -> Optional[str]:
@@ -139,11 +144,12 @@ class WorldObject:
     # --- Árbol: zarandear ---
 
     def can_shake(self) -> bool:
-        return self.type == ObjType.TREE and self.has_apples and self._shake_cd <= 0
+        return (self.type == ObjType.TREE and self.has_apples
+                and self._shake_cd <= 0 and not self.chopped)
 
     def shake(self) -> list[GroundItem]:
         self.shake_t = 0.4
-        if not self.has_apples or self.apple_count == 0:
+        if not self.has_apples or self.apple_count == 0 or self.chopped:
             return []
         n_fall = random.randint(1, min(2, self.apple_count))
         self.apple_count -= n_fall
@@ -158,25 +164,46 @@ class WorldObject:
         logger.info(f"Tree ({self.col},{self.row}) shaken: {n_fall} apple(s)")
         return items
 
+    # --- Árbol: talar ---
+
+    def chop(self) -> bool:
+        """Tala el árbol. Devuelve True si se taló."""
+        if self.type != ObjType.TREE or self.chopped:
+            return False
+        self.chopped      = True
+        self.stump_timer  = 0.0
+        self.has_apples   = False
+        self.apple_count  = 0
+        logger.info(f"Tree ({self.col},{self.row}) chopped")
+        return True
+
     def update(self, delta: float) -> None:
         for cid in self._cooldowns.copy():
             self._cooldowns[cid] = max(0.0, self._cooldowns[cid] - delta)
         if self.type == ObjType.TREE:
-            if self._shake_cd > 0:
-                self._shake_cd = max(0.0, self._shake_cd - delta)
-            if self.shake_t > 0:
-                self.shake_t = max(0.0, self.shake_t - delta)
-            if self.has_apples and self.apple_count < APPLE_MAX_PER_TREE:
-                self._regrow_timer += delta
-                if self._regrow_timer >= APPLE_REGROW_TIME:
-                    self.apple_count  += 1
-                    self._regrow_timer = 0.0
+            if not self.chopped:
+                if self._shake_cd > 0:
+                    self._shake_cd = max(0.0, self._shake_cd - delta)
+                if self.shake_t > 0:
+                    self.shake_t = max(0.0, self.shake_t - delta)
+                if self.has_apples and self.apple_count < APPLE_MAX_PER_TREE:
+                    self._regrow_timer += delta
+                    if self._regrow_timer >= APPLE_REGROW_TIME:
+                        self.apple_count  += 1
+                        self._regrow_timer = 0.0
+            else:
+                self.stump_timer += delta
+
+    @property
+    def stump_expired(self) -> bool:
+        return self.chopped and self.stump_timer >= STUMP_DURATION
 
     def to_dict(self) -> dict:
         d = {"type": self.type.name, "col": self.col, "row": self.row}
         if self.type == ObjType.TREE:
             d["has_apples"]  = self.has_apples
             d["apple_count"] = self.apple_count
+            d["chopped"]     = self.chopped
         return d
 
     @classmethod
@@ -185,9 +212,7 @@ class WorldObject:
         if obj.type == ObjType.TREE:
             obj.has_apples  = d.get("has_apples", False)
             obj.apple_count = d.get("apple_count", 0)
-            if obj.has_apples and obj.apple_count == 0:
-                # árbol guardado vacío: respetar el estado
-                pass
+            obj.chopped     = d.get("chopped", False)
         return obj
 
 
@@ -199,6 +224,7 @@ class WorldMap:
     def __init__(self):
         self._objects:      list[WorldObject] = []
         self._ground_items: list[GroundItem]  = []
+        self.wood: int = 0   # madera recolectada (recurso global)
 
     # --- Colocación ---
 
@@ -239,7 +265,20 @@ class WorldMap:
     def cell_blocked(self, px: float, py: float) -> bool:
         return self.is_blocked(int(px // GRID_CELL), int(py // GRID_CELL))
 
-    # --- Árboles ---
+    # --- Tala ---
+
+    def chop_tree_at(self, px: float, py: float) -> bool:
+        """Tala el árbol en (px,py). Devuelve True si se taló."""
+        obj = self.get_at_px(px, py)
+        if obj is None or obj.type != ObjType.TREE or obj.chopped:
+            return False
+        if obj.chop():
+            self.wood += WOOD_PER_TREE
+            logger.info(f"Wood collected: {self.wood} total")
+            return True
+        return False
+
+    # --- Árboles: zarandear ---
 
     def shake_tree_at(self, px: float, py: float) -> list[GroundItem]:
         obj = self.get_at_px(px, py)
@@ -274,7 +313,7 @@ class WorldMap:
     ) -> Optional[WorldObject]:
         candidates = [
             o for o in self._objects
-            if o.need == need and o.can_use(creature_id)
+            if o.need == need and o.can_use(creature_id) and not getattr(o, 'chopped', False)
         ]
         if not candidates:
             return None
@@ -285,6 +324,8 @@ class WorldMap:
     def update(self, delta: float) -> None:
         for obj in self._objects:
             obj.update(delta)
+        # Eliminar tocones expirados
+        self._objects = [o for o in self._objects if not o.stump_expired]
         for item in self._ground_items:
             item.update(delta)
         self._ground_items = [i for i in self._ground_items if not i.rotten]
