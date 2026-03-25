@@ -72,34 +72,41 @@ def find_creature_at(creatures: list[Creature], mx: int, my: int) -> Creature | 
 # Input handlers — each handles one category of event
 # -----------------------------------------------------------------------
 
+def _apply_action_key(
+    key: int,
+    targets: list[Creature],
+    selected: Creature | None,
+    creatures: list[Creature],
+    world: WorldMap,
+) -> None:
+    """Ejecuta la acción correspondiente a una tecla de juego."""
+    if key == pygame.K_f:
+        for c in targets: c.feed()
+    elif key == pygame.K_d:
+        for c in targets: c.shower()
+    elif key == pygame.K_j:
+        for c in targets: c.play()
+    elif key == pygame.K_s:
+        if selected: selected.sleep()
+    elif key == pygame.K_g:
+        for c in creatures: c.save()
+        save_world(world)
+        logger.info("State saved manually")
+
+
 def _handle_keydown(
     event: pygame.event.Event,
     creatures: list[Creature],
     selected: Creature | None,
-    placement: PlacementMode,
     world: WorldMap,
 ) -> bool:
     """Returns True if the simulation should quit."""
     if event.key == pygame.K_ESCAPE:
         return True
-
     if event.key in (pygame.K_1, pygame.K_2, pygame.K_3, pygame.K_4):
         return False  # selection handled via drag from palette
-
     targets = [selected] if selected else creatures
-    if event.key == pygame.K_f:
-        for c in targets: c.feed()
-    elif event.key == pygame.K_d:
-        for c in targets: c.shower()
-    elif event.key == pygame.K_j:
-        for c in targets: c.play()
-    elif event.key == pygame.K_s:
-        if selected: selected.sleep()
-    elif event.key == pygame.K_g:
-        for c in creatures: c.save()
-        save_world(world)
-        logger.info("State saved manually")
-
+    _apply_action_key(event.key, targets, selected, creatures, world)
     return False
 
 
@@ -118,7 +125,6 @@ def _handle_left_click(
         clicked.selected = True
         return clicked
 
-    # Hacha activa: talar árbol
     if placement.tool == ToolMode.AXE:
         world.chop_tree_at(mx, my)
         return selected
@@ -128,12 +134,30 @@ def _handle_left_click(
         world.shake_tree_at(mx, my)
         return selected
 
-    if placement.drag_type is not None:
-        return selected  # el drag ya se gestiona en on_mouse_down/on_mouse_up
-
     if selected:
         selected.selected = False
     return None
+
+
+def _handle_button_down(
+    event: pygame.event.Event,
+    mx: int,
+    my: int,
+    in_area: bool,
+    creatures: list[Creature],
+    selected: Creature | None,
+    placement: PlacementMode,
+    world: WorldMap,
+) -> Creature | None:
+    """Gestiona MOUSEBUTTONDOWN. Devuelve la criatura seleccionada actualizada."""
+    if event.button == 1:
+        if placement.on_mouse_down(mx, my):
+            return selected
+        if in_area:
+            return _handle_left_click(mx, my, creatures, selected, placement, world)
+    if event.button == 3 and in_area:
+        placement.on_right_click(mx, my)
+    return selected
 
 
 def _handle_mouse_event(
@@ -153,15 +177,7 @@ def _handle_mouse_event(
         return selected
 
     if event.type == pygame.MOUSEBUTTONDOWN:
-        if event.button == 1:
-            # Intentar iniciar drag desde la paleta (panel lateral)
-            if placement.on_mouse_down(mx, my):
-                return selected
-            # Si no hay drag, manejar clic en el mundo
-            if in_area:
-                return _handle_left_click(mx, my, creatures, selected, placement, world)
-        if event.button == 3 and in_area:
-            placement.on_right_click(mx, my)
+        return _handle_button_down(event, mx, my, in_area, creatures, selected, placement, world)
 
     if event.type == pygame.MOUSEBUTTONUP and event.button == 1:
         placement.on_mouse_up()
@@ -226,7 +242,7 @@ def main() -> None:
             if event.type == pygame.QUIT:
                 running = False
             elif event.type == pygame.KEYDOWN:
-                if _handle_keydown(event, creatures, selected, placement, world):
+                if _handle_keydown(event, creatures, selected, world):
                     running = False
             elif event.type in (pygame.MOUSEMOTION, pygame.MOUSEBUTTONDOWN, pygame.MOUSEBUTTONUP):
                 selected = _handle_mouse_event(event, creatures, selected, placement, world)

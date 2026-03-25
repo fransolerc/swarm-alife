@@ -3,7 +3,6 @@
 # =============================================================================
 
 import random
-import math
 import time
 import logging
 import os
@@ -14,57 +13,82 @@ from agent.memory.associative_memory import AssociativeMemory
 from config import (
     WINDOW_WIDTH, WINDOW_HEIGHT, TOOLBAR_HEIGHT,
     CREATURE_SPEED, WANDER_INTERVAL, INTERACTION_RADIUS,
-    LLM_MESSAGE_COOLDOWN, DATA_DIR, CREATURE_RADIUS,
+    LLM_MESSAGE_COOLDOWN, DATA_DIR,
     REPRODUCTION_MIN_AGE, REPRODUCTION_NEED_THRESHOLD,
-    REPRODUCTION_COOLDOWN, OFFSPRING_NEED_VARIANCE, OFFSPRING_SPAWN_RADIUS,
-    NEED_MIN, NEED_MAX,
+    REPRODUCTION_COOLDOWN, OFFSPRING_NEED_VARIANCE,
+    NEED_MIN, NEED_MAX, GRID_CELL,
 )
-from utils import clamp, normalize, distance, atomic_write_json, load_json, extract_keywords
+from utils import clamp, distance, atomic_write_json, load_json, extract_keywords
 
 
 logger = logging.getLogger(__name__)
 
-_AREA_W = WINDOW_WIDTH
-_AREA_H = WINDOW_HEIGHT - TOOLBAR_HEIGHT
+_AREA_W  = WINDOW_WIDTH
+_AREA_H  = WINDOW_HEIGHT - TOOLBAR_HEIGHT
+_MAX_COL = _AREA_W // GRID_CELL - 1
+_MAX_ROW = _AREA_H // GRID_CELL - 1
+
+# Cuatro direcciones cardinales (dc, dr)
+_DIRECTIONS = [(1, 0), (-1, 0), (0, 1), (0, -1)]
+
+
+def _cell_center(col: int, row: int) -> tuple[float, float]:
+    return col * GRID_CELL + GRID_CELL / 2, row * GRID_CELL + GRID_CELL / 2
 
 
 class Creature:
     def __init__(self, creature_id: str, x: Optional[float] = None, y: Optional[float] = None):
         self.id = creature_id
-        self.x  = x if x is not None else random.uniform(CREATURE_RADIUS, _AREA_W - CREATURE_RADIUS)
-        self.y  = y if y is not None else random.uniform(CREATURE_RADIUS, _AREA_H - CREATURE_RADIUS)
 
-        self.dx: float = 0.0
-        self.dy: float = 0.0
+        # Celda inicial — derivada de x/y si se pasan, aleatoria si no
+        if x is not None and y is not None:
+            self.grid_col = int(clamp(x // GRID_CELL, 1, _MAX_COL - 1))
+            self.grid_row = int(clamp(y // GRID_CELL, 1, _MAX_ROW - 1))
+        else:
+            self.grid_col = random.randint(1, _MAX_COL - 1)
+            self.grid_row = random.randint(1, _MAX_ROW - 1)
+
+        self.x, self.y = _cell_center(self.grid_col, self.grid_row)
+
+        # Estado de movimiento por celda
+        self._target_col: int   = self.grid_col
+        self._target_row: int   = self.grid_row
+        self._move_progress: float = 1.0   # 1.0 = en celda actual, listo para moverse
+        self._src_x: float      = self.x
+        self._src_y: float      = self.y
+
+        # Deambulación
         self._wander_timer: float    = 0.0
         self._wander_interval: float = random.uniform(*WANDER_INTERVAL)
-        self._pick_new_direction()
+
+        # Dirección preferida desde seeking (0,0 = libre)
+        self._seek_dir: tuple[int, int] = (0, 0)
 
         self.needs  = Needs()
         self.memory = AssociativeMemory()
 
-        self._last_llm_time: float       = 0.0
-        self._pending_need: Optional[str]= None
+        self._last_llm_time: float        = 0.0
+        self._pending_need: Optional[str] = None
         self.current_message: Optional[str] = None
-        self._message_timer: float       = 0.0
-        self._message_duration: float    = 6.0
+        self._message_timer: float        = 0.0
+        self._message_duration: float     = 6.0
 
-        self.selected: bool  = False
+        self.selected: bool = False
 
-        self.age: float                  = 0.0
+        self.age: float                   = 0.0
         self._reproduction_cooldown: float = 0.0
-        self.generation: int             = 0
+        self.generation: int              = 0
 
         # Seeking de objetos
-        self._target_obj                 = None   # WorldObject | None
-        self._using_obj: bool            = False
-        self._use_timer: float           = 0.0   # segundos que lleva usando el objeto
+        self._target_obj               = None   # WorldObject | None
+        self._using_obj: bool          = False
+        self._use_timer: float         = 0.0
 
         # Animación — leídos por el renderer, nunca afectan la lógica
-        self.anim_t: float     = random.uniform(0, 6.28)  # fase inicial aleatoria
-        self.speed_real: float = 0.0   # velocidad actual en px/s (para walk vs idle)
+        self.anim_t: float     = random.uniform(0, 6.28)
+        self.speed_real: float = 0.0
 
-        logger.info(f"Creature {self.id} created at ({self.x:.0f}, {self.y:.0f})")
+        logger.info(f"Creature {self.id} created at cell ({self.grid_col},{self.grid_row})")
 
     # ------------------------------------------------------------------
     # Update
@@ -93,79 +117,103 @@ class Creature:
     # ------------------------------------------------------------------
 
     def _update_seeking(self, delta: float, world) -> None:
-        from config import HUNGER_SEEK_THRESHOLD, OBJ_USE_DURATION
+        from config import HUNGER_SEEK_THRESHOLD
 
-        # Si está en uso activo, completar la duración antes de cualquier otra lógica
-        if self._using_obj and self._target_obj is not None:
-            self._use_timer += delta
-            duration = OBJ_USE_DURATION.get(self._target_obj.type.name, 3.0)
-            if self._use_timer < duration:
-                # Frenar: quedarse junto al objeto hasta que expire el timer
-                self.dx *= 0.1
-                self.dy *= 0.1
-                return
-            else:
-                # Timer expirado: liberar
-                self._using_obj  = False
-                self._use_timer  = 0.0
-                self._target_obj = None
-                return
+        if self._handle_active_use(delta):
+            return
 
         urgent = self.needs.most_urgent()
 
-        # Buscar manzanas del suelo si hay hambre
         if urgent == "hunger" or self.needs.hunger >= HUNGER_SEEK_THRESHOLD:
-            apple = world.nearest_apple(self.x, self.y)
-            if apple is not None:
-                if apple.in_range(self.x, self.y):
-                    world.pick_apple(apple, self.needs)
-                    self.memory.add_raw("yo", "comí", "manzana", poignancy=5.0,
-                                        keywords=["manzana", "hambre"])
-                    self._target_obj = None
-                    self._using_obj  = False
-                    return
-                else:
-                    self._steer_toward(apple.x, apple.y)
-                    return
+            if self._seek_apple(world):
+                return
 
         if urgent is None:
-            self._target_obj = None
-            self._using_obj  = False
-            self._use_timer  = 0.0
+            self._reset_seeking()
             return
 
-        # Buscar nuevo target si no hay o ya no es válido
+        self._refresh_target(urgent, world)
+
+        if self._target_obj is None:
+            self._seek_dir = (0, 0)
+            return
+
+        if self._target_obj.in_range(self.x, self.y):
+            self._try_use_target(urgent)
+        else:
+            self._steer_toward(self._target_obj.px, self._target_obj.py)
+
+    def _handle_active_use(self, delta: float) -> bool:
+        """Gestiona el timer de uso activo. Devuelve True si la criatura sigue en uso."""
+        from config import OBJ_USE_DURATION
+        if not (self._using_obj and self._target_obj is not None):
+            return False
+        self._use_timer += delta
+        duration = OBJ_USE_DURATION.get(self._target_obj.type.name, 3.0)
+        if self._use_timer < duration:
+            self._seek_dir = (0, 0)
+        else:
+            self._using_obj  = False
+            self._use_timer  = 0.0
+            self._target_obj = None
+        return True
+
+    def _seek_apple(self, world) -> bool:
+        """Intenta encontrar y recoger la manzana más cercana. Devuelve True si la gestión fue completa."""
+        apple = world.nearest_apple(self.x, self.y)
+        if apple is None:
+            return False
+        if apple.in_range(self.x, self.y):
+            world.pick_apple(apple, self.needs)
+            self.memory.add_raw("yo", "comí", "manzana", poignancy=5.0,
+                                keywords=["manzana", "hambre"])
+            self._target_obj = None
+            self._using_obj  = False
+            self._seek_dir   = (0, 0)
+        else:
+            self._steer_toward(apple.x, apple.y)
+        return True
+
+    def _reset_seeking(self) -> None:
+        """Cancela cualquier seeking activo cuando no hay necesidades urgentes."""
+        self._target_obj = None
+        self._using_obj  = False
+        self._use_timer  = 0.0
+        self._seek_dir   = (0, 0)
+
+    def _refresh_target(self, urgent: str, world) -> None:
+        """Actualiza el target si el actual ya no es válido para la necesidad urgente."""
         if (self._target_obj is None
                 or self._target_obj.need != urgent
                 or not self._target_obj.can_use(self.id)):
             self._target_obj = world.nearest_for_need(urgent, self.x, self.y, self.id)
             self._use_timer  = 0.0
 
-        if self._target_obj is None:
-            return
-
-        if self._target_obj.in_range(self.x, self.y):
-            # Iniciar uso: aplicar efecto y empezar timer
-            used = self._target_obj.use(self.id, self.needs)
-            if used:
-                self._using_obj = True
-                self._use_timer = 0.0
-                self.memory.add_raw(
-                    subject="yo", predicate="usé",
-                    object_=self._target_obj.type.name.lower(),
-                    poignancy=5.0,
-                    keywords=[urgent, self._target_obj.type.name.lower()],
-                )
-        else:
-            self._steer_toward(self._target_obj.px, self._target_obj.py)
+    def _try_use_target(self, urgent: str) -> None:
+        """Inicia el uso del objeto target si puede usarse."""
+        used = self._target_obj.use(self.id, self.needs)
+        if used:
+            self._using_obj = True
+            self._use_timer = 0.0
+            self._seek_dir  = (0, 0)
+            self.memory.add_raw(
+                subject="yo", predicate="usé",
+                object_=self._target_obj.type.name.lower(),
+                poignancy=5.0,
+                keywords=[urgent, self._target_obj.type.name.lower()],
+            )
 
     def _steer_toward(self, tx: float, ty: float) -> None:
-        dx, dy = normalize(tx - self.x, ty - self.y)
-        self.dx = self.dx * 0.3 + dx * 0.7
-        self.dy = self.dy * 0.3 + dy * 0.7
+        """Establece la dirección cardinal más cercana al destino."""
+        dx = tx - self.x
+        dy = ty - self.y
+        if abs(dx) >= abs(dy):
+            self._seek_dir = (1 if dx > 0 else -1, 0)
+        else:
+            self._seek_dir = (0, 1 if dy > 0 else -1)
 
     # ------------------------------------------------------------------
-    # Movimiento
+    # Movimiento por cuadrícula
     # ------------------------------------------------------------------
 
     def _update_movement(self, delta: float, world=None) -> None:
@@ -173,48 +221,88 @@ class Creature:
         if self.needs.energy <= 20.0:   speed *= 0.4
         elif self.needs.energy <= 40.0: speed *= 0.7
 
-        nx = self.x + self.dx * speed * delta
-        ny = self.y + self.dy * speed * delta
+        # Tasa de progreso: cuánto avanzamos en [0,1] por segundo
+        progress_rate = speed / GRID_CELL
 
-        # Colisión con árboles: comprobar celda destino
-        if world is not None and world.cell_blocked(nx, ny):
-            # Intentar deslizarse en X o Y por separado
-            if not world.cell_blocked(nx, self.y):
-                ny = self.y
-            elif not world.cell_blocked(self.x, ny):
-                nx = self.x
+        if self._move_progress < 1.0:
+            # Interpolando hacia la celda destino
+            self._move_progress = min(1.0, self._move_progress + progress_rate * delta)
+            t = self._move_progress
+            dst_x, dst_y = _cell_center(self._target_col, self._target_row)
+            self.x = self._src_x + (dst_x - self._src_x) * t
+            self.y = self._src_y + (dst_y - self._src_y) * t
+            self.speed_real = speed
+
+            if self._move_progress >= 1.0:
+                # Llegada: confirmar celda
+                self.grid_col = self._target_col
+                self.grid_row = self._target_row
+                self.x, self.y = _cell_center(self.grid_col, self.grid_row)
+                self.speed_real = 0.0
+
+        if self._move_progress >= 1.0:
+            # Si está en uso activo, no moverse
+            if self._using_obj:
+                self.speed_real = 0.0
+                self.anim_t += delta
+                return
+
+            # Elegir celda siguiente
+            self._wander_timer += delta
+            nc, nr = self._pick_next_cell(world)
+            if nc != self.grid_col or nr != self.grid_row:
+                self._src_x, self._src_y = self.x, self.y
+                self._target_col  = nc
+                self._target_row  = nr
+                self._move_progress = 0.0
             else:
-                # Bloqueado en ambos ejes: rebotar y cambiar dirección
-                self.dx *= -1
-                self.dy *= -1
-                nx = self.x
-                ny = self.y
-                self._pick_new_direction()
+                self.speed_real = 0.0
 
-        self.x = nx
-        self.y = ny
+        self.anim_t += delta
 
-        if self.x < CREATURE_RADIUS or self.x > _AREA_W - CREATURE_RADIUS:
-            self.dx *= -1
-            self.x = clamp(self.x, CREATURE_RADIUS, _AREA_W - CREATURE_RADIUS)
-        if self.y < CREATURE_RADIUS or self.y > _AREA_H - CREATURE_RADIUS:
-            self.dy *= -1
-            self.y = clamp(self.y, CREATURE_RADIUS, _AREA_H - CREATURE_RADIUS)
+    def _pick_next_cell(self, world) -> tuple[int, int]:
+        """
+        Devuelve la celda adyacente a la que moverse.
+        Si hay seek_dir, prioriza esa dirección (con fallback a perpendiculares).
+        Si no, deambula cuando expira el timer.
+        """
+        if self._seek_dir != (0, 0):
+            dc, dr = self._seek_dir
+            nc, nr = self.grid_col + dc, self.grid_row + dr
+            if self._cell_valid(nc, nr, world):
+                return nc, nr
+            perp = [(-dr, dc), (dr, -dc)]
+            random.shuffle(perp)
+            result = self._try_directions(perp, world)
+            return result if result is not None else (self.grid_col, self.grid_row)
 
-        self._wander_timer += delta
         if self._wander_timer >= self._wander_interval:
-            self._pick_new_direction()
+            self._wander_timer    = 0.0
+            self._wander_interval = random.uniform(*WANDER_INTERVAL)
+            dirs = list(_DIRECTIONS)
+            random.shuffle(dirs)
+            result = self._try_directions(dirs, world)
+            if result is not None:
+                return result
 
-        # Actualizar estado de animación
-        self.speed_real = speed * math.hypot(self.dx, self.dy)
-        self.anim_t    += delta
+        return self.grid_col, self.grid_row
 
-    def _pick_new_direction(self) -> None:
-        angle = random.uniform(0, 2 * math.pi)
-        self.dx = math.cos(angle)
-        self.dy = math.sin(angle)
-        self._wander_timer    = 0.0
-        self._wander_interval = random.uniform(*WANDER_INTERVAL)
+    def _try_directions(self, dirs: list, world) -> tuple[int, int] | None:
+        """Prueba una lista de direcciones (dc, dr) y devuelve la primera celda válida."""
+        for dc, dr in dirs:
+            nc, nr = self.grid_col + dc, self.grid_row + dr
+            if self._cell_valid(nc, nr, world):
+                return nc, nr
+        return None
+
+    @staticmethod
+    def _cell_valid(col: int, row: int, world) -> bool:
+        """True si la celda está dentro de los límites y no está bloqueada."""
+        if col < 0 or col > _MAX_COL or row < 0 or row > _MAX_ROW:
+            return False
+        if world is not None and world.is_blocked(col, row):
+            return False
+        return True
 
     # ------------------------------------------------------------------
     # LLM
@@ -272,8 +360,8 @@ class Creature:
     # ------------------------------------------------------------------
 
     def ready_to_reproduce(self) -> bool:
-        if self.age < REPRODUCTION_MIN_AGE:        return False
-        if self._reproduction_cooldown > 0:         return False
+        if self.age < REPRODUCTION_MIN_AGE:       return False
+        if self._reproduction_cooldown > 0:        return False
         n = self.needs
         return (
             n.hunger    <= (100.0 - REPRODUCTION_NEED_THRESHOLD) and
@@ -283,12 +371,17 @@ class Creature:
         )
 
     def spawn_offspring(self, offspring_id: str) -> "Creature":
-        angle = random.uniform(0, 2 * math.pi)
-        ox = clamp(self.x + math.cos(angle) * OFFSPRING_SPAWN_RADIUS,
-                   CREATURE_RADIUS, _AREA_W - CREATURE_RADIUS)
-        oy = clamp(self.y + math.sin(angle) * OFFSPRING_SPAWN_RADIUS,
-                   CREATURE_RADIUS, _AREA_H - CREATURE_RADIUS)
+        # Spawn en celda adyacente libre (si existe)
+        dirs = list(_DIRECTIONS)
+        random.shuffle(dirs)
+        oc, or_ = self.grid_col, self.grid_row
+        for dc, dr in dirs:
+            nc, nr = self.grid_col + dc, self.grid_row + dr
+            if 0 <= nc <= _MAX_COL and 0 <= nr <= _MAX_ROW:
+                oc, or_ = nc, nr
+                break
 
+        ox, oy = _cell_center(oc, or_)
         offspring = Creature(offspring_id, x=ox, y=oy)
         offspring.generation = self.generation + 1
 
@@ -336,6 +429,7 @@ class Creature:
         path = os.path.join(DATA_DIR, f"{self.id}.json")
         atomic_write_json(path, {
             "id": self.id, "x": self.x, "y": self.y,
+            "grid_col": self.grid_col, "grid_row": self.grid_row,
             "age": self.age, "generation": self.generation,
             "needs": self.needs.to_dict(), "memory": self.memory.to_list(),
         })
@@ -344,8 +438,19 @@ class Creature:
         data = load_json(os.path.join(DATA_DIR, f"{self.id}.json"))
         if not data:
             return False
-        self.x          = data.get("x", self.x)
-        self.y          = data.get("y", self.y)
+        # Preferir grid_col/row guardados; caer a derivar de x/y si no existen
+        if "grid_col" in data and "grid_row" in data:
+            self.grid_col = int(clamp(data["grid_col"], 0, _MAX_COL))
+            self.grid_row = int(clamp(data["grid_row"], 0, _MAX_ROW))
+        else:
+            sx = data.get("x", self.x)
+            sy = data.get("y", self.y)
+            self.grid_col = int(clamp(sx // GRID_CELL, 0, _MAX_COL))
+            self.grid_row = int(clamp(sy // GRID_CELL, 0, _MAX_ROW))
+        self.x, self.y = _cell_center(self.grid_col, self.grid_row)
+        self._target_col    = self.grid_col
+        self._target_row    = self.grid_row
+        self._move_progress = 1.0
         self.age        = data.get("age", 0.0)
         self.generation = data.get("generation", 0)
         self.needs.from_dict(data.get("needs", {}))
@@ -353,4 +458,7 @@ class Creature:
         return True
 
     def __repr__(self) -> str:
-        return f"Creature({self.id!r}, pos=({self.x:.0f},{self.y:.0f}), {self.needs})"
+        return (
+            f"Creature({self.id!r}, cell=({self.grid_col},{self.grid_row}), "
+            f"pos=({self.x:.0f},{self.y:.0f}), {self.needs})"
+        )
