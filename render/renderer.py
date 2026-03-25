@@ -9,8 +9,7 @@ import logging
 
 from config import (
     WINDOW_WIDTH, WINDOW_HEIGHT, TOOLBAR_HEIGHT,
-    CREATURE_RADIUS, NEED_BAR_WIDTH, NEED_BAR_HEIGHT, NEED_BAR_OFFSET_Y,
-    COLOR_NEED_BAR_BG, COLOR_HUNGER_BAR, COLOR_HYGIENE_BAR,
+    CREATURE_RADIUS, COLOR_HUNGER_BAR, COLOR_HYGIENE_BAR,
     COLOR_HAPPINESS_BAR, COLOR_ENERGY_BAR,
     COLOR_MESSAGE_BG, COLOR_MESSAGE_TEXT,
     NEED_MAX, GRID_CELL,
@@ -330,14 +329,6 @@ class Renderer:
             _el(self.screen, leg_c, acx-10, acy+r-3, 5, 4)
             _el(self.screen, leg_c, acx+10, acy+r-3, 5, 4)
         self._draw_face(acx, acy, state, cheek_c)
-        self._draw_bars(c, cx, cy)
-
-        gs = self.font_tiny.render(f"g{c.generation}", True, C_GEN_TEXT)
-        gw = gs.get_width() + 6
-        bg = pygame.Surface((gw,13), pygame.SRCALPHA)
-        pygame.draw.rect(bg, (*C_GEN_BG,200), (0,0,gw,13), border_radius=3)
-        self.screen.blit(bg, (cx-gw//2, cy-r-20))
-        self.screen.blit(gs, (cx-gs.get_width()//2, cy-r-19))
 
     def _draw_face(self, cx, cy, state, cheek_c):
         ey, elx, erx = cy-4, cx-6, cx+6
@@ -372,19 +363,6 @@ class Renderer:
                 pygame.draw.line(self.screen,(42,10,10),(ox+4,ey-4),(ox-4,ey+4),2)
             _el(self.screen,(42,10,10),cx,cy+5,6,5)
             self.screen.blit(self.font_small.render("!!",True,(255,170,68)),(cx-6,cy-CREATURE_RADIUS-14))
-
-    def _draw_bars(self, c, cx, cy):
-        bars = [(c.needs.hunger,COLOR_HUNGER_BAR,True),(c.needs.hygiene,COLOR_HYGIENE_BAR,False),
-                (c.needs.happiness,COLOR_HAPPINESS_BAR,False),(c.needs.energy,COLOR_ENERGY_BAR,False)]
-        x0 = cx - NEED_BAR_WIDTH//2
-        y0 = cy + NEED_BAR_OFFSET_Y
-        for i,(val,col,inv) in enumerate(bars):
-            by = y0 + i*(NEED_BAR_HEIGHT+2)
-            if by > _WORLD_H: break
-            pygame.draw.rect(self.screen,COLOR_NEED_BAR_BG,(x0,by,NEED_BAR_WIDTH,NEED_BAR_HEIGHT),border_radius=2)
-            fill = (1.0-val/NEED_MAX) if inv else (val/NEED_MAX)
-            fw = max(0,int(NEED_BAR_WIDTH*fill))
-            if fw: pygame.draw.rect(self.screen,col,(x0,by,fw,NEED_BAR_HEIGHT),border_radius=2)
 
     # ---------------------------------------------------------------
     # Burbuja de mensaje
