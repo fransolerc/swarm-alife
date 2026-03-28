@@ -20,7 +20,8 @@ from agent.social import update_social
 from agent.communication import trigger_llm_message
 from agent.memory.sim_clock import SimClock
 from world.objects import WorldMap, ObjType
-from world.placement import PlacementMode, ToolMode
+from world.placement import PlacementMode
+from world.progression import game_progress
 from render.renderer import Renderer
 
 logger = logging.getLogger(__name__)
@@ -69,7 +70,7 @@ def find_creature_at(creatures: list[Creature], mx: int, my: int) -> Creature | 
 
 
 # -----------------------------------------------------------------------
-# Input handlers — each handles one category of event
+# Input handlers
 # -----------------------------------------------------------------------
 
 def _apply_action_key(
@@ -100,11 +101,12 @@ def _handle_keydown(
     selected: Creature | None,
     world: WorldMap,
 ) -> bool:
-    """Returns True if the simulation should quit."""
     if event.key == pygame.K_ESCAPE:
         return True
+
     if event.key in (pygame.K_1, pygame.K_2, pygame.K_3, pygame.K_4):
-        return False  # selection handled via drag from palette
+        return False
+
     targets = [selected] if selected else creatures
     _apply_action_key(event.key, targets, selected, creatures, world)
     return False
@@ -115,24 +117,19 @@ def _handle_left_click(
     my: int,
     creatures: list[Creature],
     selected: Creature | None,
-    placement: PlacementMode,
     world: WorldMap,
 ) -> Creature | None:
-    """Handles left click in the world area. Returns the new selected creature."""
     clicked = find_creature_at(creatures, mx, my)
     if clicked:
         if selected: selected.selected = False
         clicked.selected = True
         return clicked
 
-    if placement.tool == ToolMode.AXE:
-        world.chop_tree_at(mx, my)
-        return selected
-
     obj = world.get_at_px(mx, my)
     if obj and obj.type == ObjType.TREE:
         world.shake_tree_at(mx, my)
         return selected
+
 
     if selected:
         selected.selected = False
@@ -154,7 +151,7 @@ def _handle_button_down(
         if placement.on_mouse_down(mx, my):
             return selected
         if in_area:
-            return _handle_left_click(mx, my, creatures, selected, placement, world)
+            return _handle_left_click(mx, my, creatures, selected, world)
     if event.button == 3 and in_area:
         placement.on_right_click(mx, my)
     return selected
@@ -167,7 +164,6 @@ def _handle_mouse_event(
     placement: PlacementMode,
     world: WorldMap,
 ) -> Creature | None:
-    """Dispatches mouse events. Returns updated selected creature."""
     mx, my = event.pos
     in_area = mx < _AREA_W and my < _WORLD_H
 
@@ -198,6 +194,7 @@ def _update(
 ) -> None:
     sim_clock.update(delta)
     world.update(delta)
+    game_progress.update(len(creatures), delta)
 
     for creature in creatures:
         signal = creature.update(delta, is_night=sim_clock.is_night(), world=world)

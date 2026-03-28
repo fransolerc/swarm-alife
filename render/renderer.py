@@ -9,7 +9,8 @@ import logging
 
 from config import (
     WINDOW_WIDTH, WINDOW_HEIGHT, TOOLBAR_HEIGHT,
-    CREATURE_RADIUS, COLOR_HUNGER_BAR, COLOR_HYGIENE_BAR,
+    CREATURE_RADIUS, NEED_BAR_WIDTH, NEED_BAR_HEIGHT, NEED_BAR_OFFSET_Y,
+    COLOR_NEED_BAR_BG, COLOR_HUNGER_BAR, COLOR_HYGIENE_BAR,
     COLOR_HAPPINESS_BAR, COLOR_ENERGY_BAR,
     COLOR_MESSAGE_BG, COLOR_MESSAGE_TEXT,
     NEED_MAX, GRID_CELL,
@@ -19,10 +20,11 @@ from config import (
 )
 from world.objects import ObjType, OBJ_LABEL, WorldObject
 
+
 logger = logging.getLogger(__name__)
 
-_WORLD_H = WINDOW_HEIGHT - TOOLBAR_HEIGHT   # altura del área de juego
-_TOOLBAR_Y = _WORLD_H                       # y donde empieza la barra
+_WORLD_H   = WINDOW_HEIGHT - TOOLBAR_HEIGHT
+_TOOLBAR_Y = _WORLD_H
 
 # Paleta de mundo
 C_GRASS_DARK = (38,  58,  28)
@@ -43,19 +45,22 @@ C_GEN_BG   = (26,  42,  26)
 C_GEN_TEXT = (128, 200, 128)
 
 # Barra de info de criatura (panel izquierdo de la toolbar)
-_INFO_W    = 220
-_INFO_X    = 8
-_INFO_Y    = _TOOLBAR_Y + 6
+_INFO_W  = 220
+_INFO_X  = 8
+_INFO_Y  = _TOOLBAR_Y + 6
 
-# Geometría de los botones de la paleta (panel derecho)
-_BTN_BIG_SIZE  = 58   # botones grandes (árbol, bañera, pelota)
-_BTN_SML_SIZE  = 28   # botones pequeños (cama)
-_BTN_GAP       = 6
-_PALETTE_X     = WINDOW_WIDTH - (_BTN_BIG_SIZE * 3 + _BTN_SML_SIZE + _BTN_GAP * 4) - 12
+# Geometría de los botones de la paleta
+_BTN_BIG_SIZE = 58
+_BTN_GAP      = 6
 
 # Posición del contador de población
 _POP_CX = 42
 _POP_CY = 42
+
+# Colores de la notificación de nivel
+_LEVELUP_BG     = (20,  18,  8,  210)
+_LEVELUP_BORDER = (200, 180, 60, 220)
+_LEVELUP_TEXT   = (255, 240, 120)
 
 
 def _el(surf, color, cx, cy, rx, ry, w=0):
@@ -84,6 +89,7 @@ class Renderer:
         self.font_medium = pygame.font.SysFont("monospace", 13)
         self.font_large  = pygame.font.SysFont("monospace", 15, bold=True)
         self.font_msg    = pygame.font.SysFont("monospace", 12)
+        self.font_levelup = pygame.font.SysFont("monospace", 16, bold=True)
 
     # ---------------------------------------------------------------
     # Hierba — superficie cacheada
@@ -124,12 +130,35 @@ class Renderer:
         self._draw_creatures(creatures)
 
         # Toolbar
-        self._draw_toolbar(selected, clock_obj, placement, world.wood)
+        self._draw_toolbar(selected, clock_obj, placement)
 
         # Contador de población (sobre el mundo, esquina superior izquierda)
         self._draw_population_badge(len(creatures))
 
+        # Notificación de nivel (si activa)
+        from world.progression import game_progress
+        if game_progress.level_up_message:
+            self._draw_level_up(game_progress.level_up_message)
+
         pygame.display.flip()
+
+    # ---------------------------------------------------------------
+    # Notificación de nivel
+    # ---------------------------------------------------------------
+
+    def _draw_level_up(self, message: str) -> None:
+        pad  = 18
+        surf = self.font_levelup.render(message, True, _LEVELUP_TEXT)
+        bw   = surf.get_width()  + pad * 2
+        bh   = surf.get_height() + pad
+        bx   = WINDOW_WIDTH  // 2 - bw // 2
+        by   = _WORLD_H      // 3
+
+        bg = pygame.Surface((bw, bh), pygame.SRCALPHA)
+        pygame.draw.rect(bg, _LEVELUP_BG,     (0, 0, bw, bh), border_radius=10)
+        pygame.draw.rect(bg, _LEVELUP_BORDER, (0, 0, bw, bh), 2, border_radius=10)
+        self.screen.blit(bg, (bx, by))
+        self.screen.blit(surf, (bx + pad, by + pad // 2))
 
     # ---------------------------------------------------------------
     # Hover de celda durante drag
@@ -138,7 +167,6 @@ class Renderer:
     def _draw_cell_hover(self, placement):
         hx = placement.hover_col * GRID_CELL
         hy = placement.hover_row * GRID_CELL
-        # Clip al área de mundo
         if hy + GRID_CELL > _WORLD_H:
             return
         blocked = placement.hover_blocked()
@@ -398,13 +426,13 @@ class Renderer:
     # TOOLBAR — barra inferior estilo madera
     # ---------------------------------------------------------------
 
-    def _draw_toolbar(self, selected, clock_obj, placement, wood: int = 0):
+    def _draw_toolbar(self, selected, clock_obj, placement):
         pygame.draw.rect(self.screen, TOOLBAR_WOOD_DARK,
                          (0, _TOOLBAR_Y, WINDOW_WIDTH, TOOLBAR_HEIGHT))
         pygame.draw.line(self.screen, TOOLBAR_WOOD_EDGE,
                          (0, _TOOLBAR_Y), (WINDOW_WIDTH, _TOOLBAR_Y), 2)
         self._draw_info_panel(selected)
-        self._draw_palette_toolbar(placement, wood)
+        self._draw_palette_toolbar(placement)
         time_str = f"{clock_obj.time_str()}  {clock_obj.period()}"
         ts = self.font_small.render(time_str, True, TOOLBAR_WOOD_LIGHT)
         self.screen.blit(ts, (WINDOW_WIDTH//2 - ts.get_width()//2, _TOOLBAR_Y + 4))
@@ -413,7 +441,6 @@ class Renderer:
 
     def _draw_info_panel(self, selected):
         px, py, pw, ph = _INFO_X, _TOOLBAR_Y+6, _INFO_W, TOOLBAR_HEIGHT-12
-        # Fondo madera
         _rnd_rect(self.screen, TOOLBAR_WOOD_MID, px, py, pw, ph, 6)
         _rnd_rect(self.screen, TOOLBAR_WOOD_EDGE, px, py, pw, ph, 6, 1)
 
@@ -424,18 +451,15 @@ class Renderer:
             return
 
         c = selected
-        # Mini avatar
         self._draw_creature_mini(px+22, py+ph//2, self._state(c))
 
-        # Nombre + gen
         name_s = self.font_medium.render(c.id, True, TOOLBAR_TEXT)
         gen_s  = self.font_tiny.render(f"gen {c.generation}", True, TOOLBAR_BTN_DARK)
-        self.screen.blit(name_s, (px+44, py+6))
-        self.screen.blit(gen_s,  (px+44, py+19))
+        self.screen.blit(name_s, (px+44, py+8))
+        self.screen.blit(gen_s,  (px+44, py+22))
 
-        # Barras de necesidades — 4 barras de 6px con gap de 2px = 32px total
         bw = pw - 50
-        bh = 6
+        bh = 7
         bx = px + 44
         needs = [
             (c.needs.hunger,    COLOR_HUNGER_BAR,    True),
@@ -443,17 +467,16 @@ class Renderer:
             (c.needs.happiness, COLOR_HAPPINESS_BAR, False),
             (c.needs.energy,    COLOR_ENERGY_BAR,    False),
         ]
-        by = py + 32
+        by = py + 34
         for val, col, inv in needs:
-            pygame.draw.rect(self.screen, TOOLBAR_BTN_DARK, (bx, by, bw, bh), border_radius=2)
+            pygame.draw.rect(self.screen, TOOLBAR_BTN_DARK, (bx, by, bw, bh), border_radius=3)
             fill = (1.0 - val/NEED_MAX) if inv else (val/NEED_MAX)
             fw = max(0, int(bw * fill))
             if fw:
-                pygame.draw.rect(self.screen, col, (bx, by, fw, bh), border_radius=2)
-            by += bh + 2
+                pygame.draw.rect(self.screen, col, (bx, by, fw, bh), border_radius=3)
+            by += bh + 3
 
     def _draw_creature_mini(self, cx, cy, state):
-        """Avatar pequeño de criatura para el panel info."""
         body_c, ear_c, _, cheek_c = _STATE_COLORS[state]
         radius = 12
         _el(self.screen, ear_c,   cx-7, cy-radius-1, 4, 5)
@@ -466,15 +489,13 @@ class Renderer:
         _ci(self.screen, (255,255,255), cx-3, cy-3, 1.5)
         _ci(self.screen, (255,255,255), cx+5, cy-3, 1.5)
 
+    def _draw_palette_toolbar(self, placement):
+        from world.placement import PALETTE
 
-    def _draw_palette_toolbar(self, placement, wood: int = 0):
-        from world.placement import PALETTE, ToolMode
-
-        n_items   = len(PALETTE) + 1   # objetos + hacha
-        total_w   = n_items * (_BTN_BIG_SIZE + _BTN_GAP) - _BTN_GAP + 16
-        px        = WINDOW_WIDTH - total_w - 8
-        py        = _TOOLBAR_Y + 6
-        ph        = TOOLBAR_HEIGHT - 12
+        total_w = len(PALETTE) * (_BTN_BIG_SIZE + _BTN_GAP) - _BTN_GAP + 16
+        px = WINDOW_WIDTH - total_w - 8
+        py = _TOOLBAR_Y + 6
+        ph = TOOLBAR_HEIGHT - 12
 
         _rnd_rect(self.screen, TOOLBAR_WOOD_MID, px, py, total_w, ph, 6)
         _rnd_rect(self.screen, TOOLBAR_WOOD_EDGE, px, py, total_w, ph, 6, 1)
@@ -487,27 +508,8 @@ class Renderer:
             self._draw_palette_btn(obj_type, bx, py+4, _BTN_BIG_SIZE, ph-8, is_dragging)
             bx += _BTN_BIG_SIZE + _BTN_GAP
 
-        # Botón hacha
-        axe_active = placement.tool == ToolMode.AXE
-        self._draw_axe_btn(bx, py+4, _BTN_BIG_SIZE, ph-8, axe_active)
-
-        # Ghost del objeto arrastrado
         if placement.dragging and placement.drag_type is not None:
             self._draw_drag_ghost(placement)
-
-        # Contador de madera (a la izquierda del panel paleta)
-        if wood > 0:
-            wood_x = px - 56
-            wood_y = py + ph//2 - 10
-            _rnd_rect(self.screen, TOOLBAR_WOOD_MID, wood_x, wood_y, 50, 20, 4)
-            _rnd_rect(self.screen, TOOLBAR_WOOD_EDGE, wood_x, wood_y, 50, 20, 4, 1)
-            # Icono madera (rectángulo marrón pequeño)
-            pygame.draw.rect(self.screen, (139, 94, 60),
-                             (wood_x+4, wood_y+4, 12, 12), border_radius=2)
-            pygame.draw.rect(self.screen, (107, 66, 38),
-                             (wood_x+4, wood_y+4, 12, 12), 1, border_radius=2)
-            ws = self.font_small.render(str(wood), True, TOOLBAR_TEXT)
-            self.screen.blit(ws, (wood_x + 20, wood_y + 4))
 
     def _draw_palette_btn(self, obj_type, bx, by, bw, bh, is_dragging):
         bg  = TOOLBAR_BTN_SEL  if is_dragging else TOOLBAR_BTN_DARK
@@ -516,33 +518,13 @@ class Renderer:
         _rnd_rect(self.screen, bg,  bx, by, bw, bh, 5)
         _rnd_rect(self.screen, bdr, bx, by, bw, bh, 5, lw)
 
-        # Icono centrado
         icx = bx + bw//2
         icy = by + bh//2 - 4
         if not is_dragging:
             self._draw_object_icon(obj_type, icx, icy)
 
-        # Label
         label = OBJ_LABEL.get(obj_type, obj_type.name)
         ls = self.font_tiny.render(label, True, TOOLBAR_TEXT)
-        self.screen.blit(ls, (bx + bw//2 - ls.get_width()//2, by + bh - 13))
-
-    def _draw_axe_btn(self, bx, by, bw, bh, active):
-        bg  = TOOLBAR_BTN_SEL      if active else TOOLBAR_BTN_DARK
-        bdr = TOOLBAR_BTN_SEL_EDGE if active else TOOLBAR_WOOD_LIGHT
-        lw  = 2 if active else 1
-        _rnd_rect(self.screen, bg,  bx, by, bw, bh, 5)
-        _rnd_rect(self.screen, bdr, bx, by, bw, bh, 5, lw)
-        # Icono hacha
-        cx, cy = bx + bw//2, by + bh//2 - 4
-        # Mango
-        pygame.draw.line(self.screen, (139, 94, 60), (cx-8, cy+12), (cx+6, cy-4), 3)
-        # Hoja del hacha
-        pts = [(cx+2, cy-8), (cx+12, cy-4), (cx+8, cy+4), (cx-2, cy+2)]
-        pygame.draw.polygon(self.screen, (180, 190, 200), pts)
-        pygame.draw.polygon(self.screen, (140, 150, 160), pts, 1)
-        # Label
-        ls = self.font_tiny.render("hacha", True, TOOLBAR_TEXT)
         self.screen.blit(ls, (bx + bw//2 - ls.get_width()//2, by + bh - 13))
 
     def _draw_object_icon(self, obj_type, cx, cy):
@@ -569,6 +551,12 @@ class Renderer:
             pygame.draw.rect(self.screen,(212,168,112),(cx-11,cy-5,22,10),border_radius=2)
             pygame.draw.rect(self.screen,(240,232,208),(cx-10,cy-6,9,6),border_radius=2)
             pygame.draw.rect(self.screen,(232,208,160),(cx-1,cy-4,10,6),border_radius=1)
+        elif obj_type == ObjType.APPLE:
+            # Manzana roja con brillo y tallo
+            _ci(self.screen, (200, 50, 40), cx, cy, 10)
+            _ci(self.screen, (230, 80, 60), cx-2, cy-2, 5)
+            pygame.draw.line(self.screen, (80, 120, 40), (cx, cy-10), (cx+2, cy-14), 1)
+            _el(self.screen, (60, 140, 50), cx+2, cy-13, 3, 2)
 
     # --- Ghost durante drag ---
 
@@ -578,7 +566,6 @@ class Renderer:
         if obj_type is None:
             return
 
-        # Sí está sobre el mundo, snapping a celda
         if placement.hover_valid and my < _WORLD_H:
             snap_x = placement.hover_col * GRID_CELL + GRID_CELL//2
             snap_y = placement.hover_row * GRID_CELL + GRID_CELL//2
@@ -599,17 +586,14 @@ class Renderer:
 
     def _draw_population_badge(self, population: int):
         cx, cy = _POP_CX, _POP_CY
-        # Anillo exterior
         _ci(self.screen, TOOLBAR_WOOD_MID,  cx, cy, 30)
         _ci(self.screen, TOOLBAR_WOOD_EDGE, cx, cy, 30, 2)
         _ci(self.screen, TOOLBAR_WOOD_DARK, cx, cy, 26)
-        # Mini criatura
         _el(self.screen, (78,180,98), cx, cy-4, 11, 10)
         _el(self.screen, (78,180,98), cx-7, cy-13, 3, 5)
         _el(self.screen, (78,180,98), cx+7, cy-13, 3, 5)
         _ci(self.screen, (26,42,26), cx-3, cy-5, 2.5)
         _ci(self.screen, (26,42,26), cx+3, cy-5, 2.5)
-        # Número
         num = self.font_large.render(str(population), True, TOOLBAR_WOOD_LIGHT)
         self.screen.blit(num, (cx - num.get_width()//2, cy+8))
 
