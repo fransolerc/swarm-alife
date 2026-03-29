@@ -14,6 +14,8 @@ from config import (
     BATH_HYGIENE_RESTORE, BALL_HAPPINESS_BONUS, BALL_ENERGY_COST, BED_ENERGY_RESTORE,
     WINDOW_WIDTH, WINDOW_HEIGHT, UI_PANEL_WIDTH,
     STUMP_DURATION, WOOD_PER_TREE, STORE_SIZE,
+    APPLE_MAX_PER_TREE, APPLE_REGROW_TIME, APPLE_ROT_TIME, APPLE_PICK_RANGE,
+    APPLE_HUNGER_VALUE, SHAKE_COOLDOWN, APPLE_TREE_CHANCE, APPLE_SHAKE_RANGE,
 )
 from utils import distance, clamp
 
@@ -22,18 +24,6 @@ logger = logging.getLogger(__name__)
 _AREA_W = WINDOW_WIDTH - UI_PANEL_WIDTH
 _COLS   = _AREA_W      // GRID_CELL
 _ROWS   = WINDOW_HEIGHT // GRID_CELL
-
-APPLE_MAX_PER_TREE = 3
-APPLE_REGROW_TIME  = 45.0
-APPLE_ROT_TIME     = 30.0
-APPLE_PICK_RANGE   = 28.0
-APPLE_HUNGER_VALUE = 30.0
-SHAKE_COOLDOWN     = 8.0
-APPLE_TREE_CHANCE  = 0.6
-
-# Rango desde el que una criatura puede sacudir un árbol autónomamente.
-# Debe ser mayor que GRID_CELL para que la celda adyacente (distancia=40px) quede dentro.
-APPLE_SHAKE_RANGE  = GRID_CELL + 4   # 44 px
 
 
 class ObjType(Enum):
@@ -101,12 +91,15 @@ class WorldObject:
     row:  int
     size: int = field(default=1, repr=False)
 
-    _cooldowns:    dict  = field(default_factory=dict,  repr=False)
-    has_apples:    bool  = field(default=False,          repr=False)
-    apple_count:   int   = field(default=0,              repr=False)
-    _regrow_timer: float = field(default=0.0,            repr=False)
-    _shake_cd:     float = field(default=0.0,            repr=False)
-    shake_t:       float = field(default=0.0,            repr=False)
+    _cooldowns:    dict          = field(default_factory=dict,  repr=False)
+    # Mutex: solo una criatura puede usar el objeto a la vez
+    _occupant:     Optional[str] = field(default=None,          repr=False)
+
+    has_apples:    bool  = field(default=False, repr=False)
+    apple_count:   int   = field(default=0,     repr=False)
+    _regrow_timer: float = field(default=0.0,   repr=False)
+    _shake_cd:     float = field(default=0.0,   repr=False)
+    shake_t:       float = field(default=0.0,   repr=False)
 
     chopped:     bool  = field(default=False, repr=False)
     stump_timer: float = field(default=0.0,  repr=False)
@@ -149,19 +142,30 @@ class WorldObject:
         return OBJ_NEED[self.type]
 
     def in_range(self, cx: float, cy: float) -> bool:
-        """Rango de uso general (bañera, pelota, cama)."""
+        """Rango de uso general (bañera, pelota, cama, almacén)."""
         half      = (self.size * GRID_CELL) / 2
         effective = OBJECT_USE_RANGE + half - GRID_CELL / 2
         return distance((cx, cy), self.pos) <= effective
 
     def in_shake_range(self, cx: float, cy: float) -> bool:
-        """Rango específico para sacudir árboles: celda adyacente es suficiente."""
+        """Rango específico para sacudir árboles."""
         return distance((cx, cy), self.pos) <= APPLE_SHAKE_RANGE
 
+    # --- Mutex de uso ---
+
     def can_use(self, creature_id: str) -> bool:
-        return self._cooldowns.get(creature_id, 0) <= 0
+        """
+        Devuelve True si la criatura puede usar el objeto.
+        Requiere cooldown expirado Y que no haya otra criatura ocupando el objeto.
+        """
+        if self._cooldowns.get(creature_id, 0) > 0:
+            return False
+        if self._occupant is not None and self._occupant != creature_id:
+            return False
+        return True
 
     def use(self, creature_id: str, needs) -> bool:
+        """Aplica el efecto del objeto y marca la criatura como ocupante."""
         if not self.can_use(creature_id):
             return False
         if self.type in (ObjType.TREE, ObjType.STORE):
@@ -173,7 +177,14 @@ class WorldObject:
         elif self.type == ObjType.BED:
             needs.sleep_amount(BED_ENERGY_RESTORE)
         self._cooldowns[creature_id] = OBJECT_USE_COOLDOWN
+        self._occupant = creature_id
         return True
+
+    def release(self, creature_id: str) -> None:
+        """Libera el objeto cuando la criatura termina o abandona el uso."""
+        if self._occupant == creature_id:
+            self._occupant = None
+            logger.debug(f"{self.type.name} ({self.col},{self.row}): released by {creature_id}")
 
     # --- Almacén ---
 
@@ -184,6 +195,12 @@ class WorldObject:
     def deposit_wood(self, count: int = 1) -> None:
         self.stored_wood += count
         logger.debug(f"Store ({self.col},{self.row}): +{count} wood → {self.stored_wood}")
+
+    def take_apple(self) -> bool:
+        if self.type == ObjType.STORE and self.stored_apples > 0:
+            self.stored_apples -= 1
+            return True
+        return False
 
     # --- Árbol: zarandear ---
 
@@ -196,21 +213,30 @@ class WorldObject:
         )
 
     def shake(self) -> list[GroundItem]:
+        """Sacudida: cae exactamente 1 manzana. Repetir para vaciar el árbol."""
         self.shake_t = 0.4
         if not self.can_shake():
             return []
-        n_fall = random.randint(1, min(2, self.apple_count))
-        self.apple_count -= n_fall
+        self.apple_count -= 1
         self._shake_cd = SHAKE_COOLDOWN
-        items = []
-        for _ in range(n_fall):
-            angle = random.uniform(0, 2 * math.pi)
-            dist  = random.uniform(GRID_CELL * 0.6, GRID_CELL * 1.2)
-            ix    = clamp(self.px + math.cos(angle) * dist, 8, _AREA_W - 8)
-            iy    = clamp(self.py + math.sin(angle) * dist, 8, WINDOW_HEIGHT - 8)
-            items.append(GroundItem(x=ix, y=iy))
-        logger.info(f"Tree ({self.col},{self.row}) shaken: {n_fall} apple(s) dropped")
-        return items
+        angle = random.uniform(0, 2 * math.pi)
+        dist  = random.uniform(GRID_CELL * 0.6, GRID_CELL * 1.2)
+        ix    = clamp(self.px + math.cos(angle) * dist, 8, _AREA_W - 8)
+        iy    = clamp(self.py + math.sin(angle) * dist, 8, WINDOW_HEIGHT - 8)
+        logger.info(f"Tree ({self.col},{self.row}) shaken: 1 apple dropped "
+                    f"({self.apple_count} remaining)")
+        return [GroundItem(x=ix, y=iy)]
+
+    def consume_apple(self) -> bool:
+        """Consume una manzana directamente del árbol (sin aparecer en el suelo)."""
+        self.shake_t = 0.4
+        if not self.can_shake():
+            return False
+        self.apple_count -= 1
+        self._shake_cd = SHAKE_COOLDOWN
+        logger.info(f"Tree ({self.col},{self.row}) harvested: 1 apple consumed directly "
+                    f"({self.apple_count} remaining)")
+        return True
 
     # --- Árbol: talar ---
 
@@ -266,8 +292,6 @@ class WorldObject:
             size=OBJ_SIZE.get(obj_type, 1),
         )
         if obj.type == ObjType.TREE:
-            # Compatibilidad con world.json de versiones anteriores:
-            # si no hay "has_apples" en el dict, asignar con probabilidad normal.
             if "has_apples" in d:
                 obj.has_apples  = d["has_apples"]
                 obj.apple_count = d.get("apple_count", 0)
@@ -358,7 +382,7 @@ class WorldMap:
             return True
         return False
 
-    # --- Árboles: zarandear ---
+    # --- Árboles: zarandear (solo criaturas) ---
 
     def shake_tree_at(self, px: float, py: float) -> list[GroundItem]:
         obj = self.get_at_px(px, py)
@@ -368,12 +392,36 @@ class WorldMap:
         self._ground_items.extend(items)
         return items
 
+    def eat_from_tree(self, px: float, py: float, needs) -> bool:
+        """Cosecha y consume una manzana directamente para satisfacer el hambre."""
+        obj = self.get_at_px(px, py)
+        if obj is None or obj.type != ObjType.TREE:
+            return False
+        if obj.consume_apple():
+            needs.feed_amount(APPLE_HUNGER_VALUE)
+            return True
+        return False
+
+    def harvest_from_tree(self, px: float, py: float) -> bool:
+        """Extrae una manzana del árbol (para transportarla)."""
+        obj = self.get_at_px(px, py)
+        if obj is None or obj.type != ObjType.TREE:
+            return False
+        return obj.consume_apple()
+
     def nearest_shakeable_tree(self, cx: float, cy: float) -> Optional[WorldObject]:
-        """Árbol más cercano que tiene manzanas y no está en cooldown de sacudida."""
+        """Árbol más cercano con manzanas disponibles y sin cooldown de sacudida."""
         candidates = [o for o in self._objects if o.type == ObjType.TREE and o.can_shake()]
         if not candidates:
             return None
         return min(candidates, key=lambda o: distance((cx, cy), o.pos))
+
+    def nearest_stump(self, cx: float, cy: float) -> Optional[WorldObject]:
+        """Tocón más cercano (árbol talado que aún no ha desaparecido)."""
+        stumps = [o for o in self._objects if o.type == ObjType.TREE and o.chopped]
+        if not stumps:
+            return None
+        return min(stumps, key=lambda o: distance((cx, cy), o.pos))
 
     # --- Manzanas en el suelo ---
 
@@ -416,6 +464,12 @@ class WorldMap:
 
     def nearest_store(self, cx: float, cy: float) -> Optional[WorldObject]:
         stores = [o for o in self._objects if o.type == ObjType.STORE]
+        if not stores:
+            return None
+        return min(stores, key=lambda o: distance((cx, cy), o.pos))
+
+    def nearest_store_with_apples(self, cx: float, cy: float) -> Optional[WorldObject]:
+        stores = [o for o in self._objects if o.type == ObjType.STORE and o.stored_apples > 0]
         if not stores:
             return None
         return min(stores, key=lambda o: distance((cx, cy), o.pos))
