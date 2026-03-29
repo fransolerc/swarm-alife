@@ -20,16 +20,16 @@ from agent.social import update_social
 from agent.communication import trigger_llm_message
 from agent.memory.sim_clock import SimClock
 from world.objects import WorldMap, ObjType
-from world.placement import PlacementMode
-from world.progression import game_progress
+from world.placement import PlacementMode, ToolMode
 from render.renderer import Renderer
 
 logger = logging.getLogger(__name__)
 
-_AREA_W  = WINDOW_WIDTH
-_WORLD_H = WINDOW_HEIGHT - TOOLBAR_HEIGHT
-_WORLD_FILE = os.path.join(DATA_DIR, "world.json")
-_id_counter = 0
+_AREA_W        = WINDOW_WIDTH
+_WORLD_H       = WINDOW_HEIGHT - TOOLBAR_HEIGHT
+_WORLD_FILE    = os.path.join(DATA_DIR, "world.json")
+_COLONY_FILE   = os.path.join(DATA_DIR, "colony.json")
+_id_counter    = 0
 
 
 def _next_id() -> str:
@@ -39,13 +39,56 @@ def _next_id() -> str:
     return cid
 
 
-def make_initial_creatures() -> list[Creature]:
+def _seed_id_counter(ids: list[str]) -> None:
+    """Avanza el contador global para que no colisione con ID ya existentes."""
+    global _id_counter
+    for cid in ids:
+        if cid.startswith("sw"):
+            try:
+                n = int(cid[2:])
+                _id_counter = max(_id_counter, n + 1)
+            except ValueError:
+                pass
+
+
+# ---------------------------------------------------------------
+# Persistencia de criaturas
+# ---------------------------------------------------------------
+
+def save_colony(creatures: list[Creature]) -> None:
+    """Guarda los ID de toda la colonia para poder restaurarla en la próxima sesión."""
+    os.makedirs(DATA_DIR, exist_ok=True)
+    atomic_write_json(_COLONY_FILE, [c.id for c in creatures])
+
+
+def load_colony() -> list[Creature]:
+    """
+    Carga la colonia completa desde la sesión anterior.
+    Si no existe registro previo, crea las criaturas iniciales.
+    """
+    ids = load_json(_COLONY_FILE, default=[])
+
+    if not ids:
+        # Primera ejecución: crear colonia inicial
+        creatures = []
+        for _ in range(NUM_CREATURES):
+            cid = _next_id()
+            c = Creature(cid)
+            c.load()          # no-op si no hay fichero guardado
+            creatures.append(c)
+        logger.info(f"New colony started: {len(creatures)} creature(s)")
+        return creatures
+
+    _seed_id_counter(ids)
     creatures = []
-    for _ in range(NUM_CREATURES):
-        cid = _next_id()
+    for cid in ids:
         c = Creature(cid)
-        c.load()
+        loaded = c.load()
+        if not loaded:
+            logger.warning(f"No save data for {cid}, using defaults")
         creatures.append(c)
+
+    logger.info(f"Colony restored: {len(creatures)} creature(s)")
     return creatures
 
 
@@ -61,6 +104,10 @@ def load_world(world: WorldMap) -> None:
         logger.info(f"World loaded: {len(world)} objects")
 
 
+# ---------------------------------------------------------------
+# Input helpers
+# ---------------------------------------------------------------
+
 def find_creature_at(creatures: list[Creature], mx: int, my: int) -> Creature | None:
     for c in creatures:
         dx, dy = c.x - mx, c.y - my
@@ -69,10 +116,6 @@ def find_creature_at(creatures: list[Creature], mx: int, my: int) -> Creature | 
     return None
 
 
-# -----------------------------------------------------------------------
-# Input handlers
-# -----------------------------------------------------------------------
-
 def _apply_action_key(
     key: int,
     targets: list[Creature],
@@ -80,7 +123,6 @@ def _apply_action_key(
     creatures: list[Creature],
     world: WorldMap,
 ) -> None:
-    """Ejecuta la acción correspondiente a una tecla de juego."""
     if key == pygame.K_f:
         for c in targets: c.feed()
     elif key == pygame.K_d:
@@ -92,6 +134,7 @@ def _apply_action_key(
     elif key == pygame.K_g:
         for c in creatures: c.save()
         save_world(world)
+        save_colony(creatures)
         logger.info("State saved manually")
 
 
@@ -103,10 +146,6 @@ def _handle_keydown(
 ) -> bool:
     if event.key == pygame.K_ESCAPE:
         return True
-
-    if event.key in (pygame.K_1, pygame.K_2, pygame.K_3, pygame.K_4):
-        return False
-
     targets = [selected] if selected else creatures
     _apply_action_key(event.key, targets, selected, creatures, world)
     return False
@@ -117,6 +156,7 @@ def _handle_left_click(
     my: int,
     creatures: list[Creature],
     selected: Creature | None,
+    placement: PlacementMode,
     world: WorldMap,
 ) -> Creature | None:
     clicked = find_creature_at(creatures, mx, my)
@@ -125,11 +165,14 @@ def _handle_left_click(
         clicked.selected = True
         return clicked
 
+    if placement.tool == ToolMode.AXE:
+        world.chop_tree_at(mx, my)
+        return selected
+
     obj = world.get_at_px(mx, my)
     if obj and obj.type == ObjType.TREE:
         world.shake_tree_at(mx, my)
         return selected
-
 
     if selected:
         selected.selected = False
@@ -146,12 +189,11 @@ def _handle_button_down(
     placement: PlacementMode,
     world: WorldMap,
 ) -> Creature | None:
-    """Gestiona MOUSEBUTTONDOWN. Devuelve la criatura seleccionada actualizada."""
     if event.button == 1:
         if placement.on_mouse_down(mx, my):
             return selected
         if in_area:
-            return _handle_left_click(mx, my, creatures, selected, world)
+            return _handle_left_click(mx, my, creatures, selected, placement, world)
     if event.button == 3 and in_area:
         placement.on_right_click(mx, my)
     return selected
@@ -164,8 +206,8 @@ def _handle_mouse_event(
     placement: PlacementMode,
     world: WorldMap,
 ) -> Creature | None:
-    mx, my = event.pos
-    in_area = mx < _AREA_W and my < _WORLD_H
+    mx, my   = event.pos
+    in_area  = mx < _AREA_W and my < _WORLD_H
 
     if event.type == pygame.MOUSEMOTION:
         if in_area:
@@ -181,9 +223,9 @@ def _handle_mouse_event(
     return selected
 
 
-# -----------------------------------------------------------------------
+# ---------------------------------------------------------------
 # Update
-# -----------------------------------------------------------------------
+# ---------------------------------------------------------------
 
 def _update(
     creatures: list[Creature],
@@ -194,7 +236,6 @@ def _update(
 ) -> None:
     sim_clock.update(delta)
     world.update(delta)
-    game_progress.update(len(creatures), delta)
 
     for creature in creatures:
         signal = creature.update(delta, is_night=sim_clock.is_night(), world=world)
@@ -210,9 +251,9 @@ def _update(
     update_social(creatures, delta)
 
 
-# -----------------------------------------------------------------------
+# ---------------------------------------------------------------
 # Main loop
-# -----------------------------------------------------------------------
+# ---------------------------------------------------------------
 
 def main() -> None:
     pygame.init()
@@ -220,7 +261,7 @@ def main() -> None:
     pygame.display.set_caption(WINDOW_TITLE)
     clock = pygame.time.Clock()
 
-    creatures     = make_initial_creatures()
+    creatures     = load_colony()
     sim_clock     = SimClock(start_hour=8.0)
     world         = WorldMap()
     placement     = PlacementMode(world)
@@ -258,6 +299,7 @@ def main() -> None:
     logger.info(f"Shutting down. Population: {len(creatures)}")
     for c in creatures: c.save()
     save_world(world)
+    save_colony(creatures)
     pygame.quit()
     sys.exit(0)
 

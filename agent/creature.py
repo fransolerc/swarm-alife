@@ -2,6 +2,7 @@
 # agent/creature.py — swarm-alife
 # =============================================================================
 
+import heapq
 import random
 import time
 import logging
@@ -17,9 +18,9 @@ from config import (
     REPRODUCTION_MIN_AGE, REPRODUCTION_NEED_THRESHOLD,
     REPRODUCTION_COOLDOWN, OFFSPRING_NEED_VARIANCE,
     NEED_MIN, NEED_MAX, GRID_CELL,
+    CARRY_NEED_THRESHOLD,
 )
 from utils import clamp, distance, atomic_write_json, load_json, extract_keywords
-
 
 logger = logging.getLogger(__name__)
 
@@ -28,7 +29,6 @@ _AREA_H  = WINDOW_HEIGHT - TOOLBAR_HEIGHT
 _MAX_COL = _AREA_W // GRID_CELL - 1
 _MAX_ROW = _AREA_H // GRID_CELL - 1
 
-# Cuatro direcciones cardinales (dc, dr)
 _DIRECTIONS = [(1, 0), (-1, 0), (0, 1), (0, -1)]
 
 
@@ -49,19 +49,20 @@ class Creature:
 
         self.x, self.y = _cell_center(self.grid_col, self.grid_row)
 
-        # Estado de movimiento por celda
         self._target_col: int      = self.grid_col
         self._target_row: int      = self.grid_row
-        self._move_progress: float = 1.0   # 1.0 = en celda actual, listo para moverse
+        self._move_progress: float = 1.0
         self._src_x: float         = self.x
         self._src_y: float         = self.y
 
-        # Deambulacion
         self._wander_timer: float    = 0.0
         self._wander_interval: float = random.uniform(*WANDER_INTERVAL)
 
-        # Direccion preferida desde seeking (0,0 = libre)
-        self._seek_dir: tuple[int, int] = (0, 0)
+        # --- Navegacion A* ---
+        # _path: lista de celdas (col, row) pendientes de recorrer (no incluye celda actual)
+        # _path_goal: goal para el que se calculó el path, para evitar recomputos innecesarios
+        self._path: list[tuple[int, int]]          = []
+        self._path_goal: Optional[tuple[int, int]] = None
 
         self.needs  = Needs()
         self.memory = AssociativeMemory()
@@ -78,16 +79,102 @@ class Creature:
         self._reproduction_cooldown: float = 0.0
         self.generation: int               = 0
 
-        # Seeking de objetos
-        self._target_obj               = None   # WorldObject | None
-        self._using_obj: bool          = False
-        self._use_timer: float         = 0.0
+        self._target_obj  = None
+        self._using_obj: bool  = False
+        self._use_timer: float = 0.0
 
-        # Animacion — leidos por el renderer, nunca afectan la logica
+        self._shake_target = None
+
+        self._carrying: Optional[str] = None
+        self._carry_store              = None
+
         self.anim_t: float     = random.uniform(0, 6.28)
         self.speed_real: float = 0.0
 
         logger.info(f"Creature {self.id} created at cell ({self.grid_col},{self.grid_row})")
+
+    # ------------------------------------------------------------------
+    # Navegacion A*
+    # ------------------------------------------------------------------
+
+    def _astar(self, goal_col: int, goal_row: int, world) -> list[tuple[int, int]]:
+        """
+        A* desde la celda actual hasta (goal_col, goal_row).
+        Si el goal está bloqueado (arbol, almacen), acepta cualquier celda
+        libre adyacente al goal como destino valido.
+        Devuelve la lista de celdas a recorrer, sin incluir la celda de inicio.
+        """
+        start = (self.grid_col, self.grid_row)
+        goal  = (goal_col, goal_row)
+
+        if start == goal:
+            return []
+
+        goal_blocked = (
+            world is not None
+            and not self._cell_valid(goal_col, goal_row, world)
+        )
+
+        def is_terminal(col: int, row: int) -> bool:
+            if (col, row) == goal:
+                return True
+            if goal_blocked:
+                return abs(col - goal_col) + abs(row - goal_row) == 1
+            return False
+
+        def h(col: int, row: int) -> int:
+            return abs(col - goal_col) + abs(row - goal_row)
+
+        open_set: list = [(h(*start), 0, start[0], start[1])]
+        came_from: dict = {}
+        g_score: dict   = {start: 0}
+
+        while open_set:
+            _, g, col, row = heapq.heappop(open_set)
+
+            if is_terminal(col, row):
+                path: list[tuple[int, int]] = []
+                cur = (col, row)
+                while cur in came_from:
+                    path.append(cur)
+                    cur = came_from[cur]
+                path.reverse()
+                return path
+
+            for dc, dr in _DIRECTIONS:
+                nc, nr   = col + dc, row + dr
+                neighbor = (nc, nr)
+                if not self._cell_valid(nc, nr, world):
+                    continue
+                new_g = g + 1
+                if new_g < g_score.get(neighbor, 10_000):
+                    g_score[neighbor]   = new_g
+                    came_from[neighbor] = (col, row)
+                    heapq.heappush(open_set, (new_g + h(nc, nr), new_g, nc, nr))
+
+        return []
+
+    def _navigate_to(self, tx: float, ty: float, world) -> None:
+        """
+        Establece navegacion A* hacia la posicion en pixeles (tx, ty).
+        Solo recalcula el path si el goal de cuadricula cambio o el path
+        quedo vacio o su primer paso esta bloqueado.
+        """
+        goal = (int(tx // GRID_CELL), int(ty // GRID_CELL))
+
+        # Invalidar si el proximo paso del path esta bloqueado
+        if self._path and not self._cell_valid(self._path[0][0], self._path[0][1], world):
+            self._path      = []
+            self._path_goal = None
+
+        if self._path_goal != goal or not self._path:
+            self._path_goal = goal
+            self._path      = self._astar(goal[0], goal[1], world)
+
+    def _clear_path(self) -> None:
+        """Cancela la navegacion activa."""
+        self._path      = []
+        self._path_goal = None
 
     # ------------------------------------------------------------------
     # Update
@@ -112,108 +199,206 @@ class Creature:
         return None
 
     # ------------------------------------------------------------------
-    # Liberacion centralizada de target
-    # ------------------------------------------------------------------
-
-    def _release_target(self) -> None:
-        """Libera el objeto actualmente en target y resetea estado de uso."""
-        if self._target_obj is not None:
-            self._target_obj.release(self.id)
-        self._target_obj = None
-        self._using_obj  = False
-        self._use_timer  = 0.0
-        self._seek_dir   = (0, 0)
-
-    # ------------------------------------------------------------------
-    # Seeking de objetos del mundo
+    # Seeking principal
     # ------------------------------------------------------------------
 
     def _update_seeking(self, delta: float, world) -> None:
-        from config import HUNGER_SEEK_THRESHOLD, OBJ_USE_DURATION
-        from world.progression import game_progress
+        from config import HUNGER_SEEK_THRESHOLD
 
-        # En uso activo: completar la duracion antes de cualquier otra logica
-        if self._using_obj and self._target_obj is not None:
-            self._use_timer += delta
-            duration = OBJ_USE_DURATION.get(self._target_obj.type.name, 3.0)
-            if self._use_timer < duration:
-                self._seek_dir = (0, 0)   # no moverse mientras usa
-            else:
-                self._release_target()
+        if self._handle_active_use(delta):
             return
 
         urgent = self.needs.most_urgent()
 
-        # --- Hambre: manzanas en el suelo primero ---
         if urgent == "hunger" or self.needs.hunger >= HUNGER_SEEK_THRESHOLD:
-            apple = world.nearest_apple(self.x, self.y)
-            if apple is not None:
-                if apple.in_range(self.x, self.y):
-                    world.pick_apple(apple, self.needs)
-                    self.memory.add_raw("yo", "comi", "manzana", poignancy=5.0,
-                                        keywords=["manzana", "hambre"])
-                    self._release_target()
-                else:
-                    self._steer_toward(apple.x, apple.y)
+            if self._seek_food(world):
                 return
 
-            # No hay manzanas en el suelo: zarandear arbol (nivel 2+)
-            if game_progress.trees_have_apples:
-                tree = world.nearest_shakeable_tree(self.x, self.y)
-                if tree is not None:
-                    if tree.in_range(self.x, self.y):
-                        world.shake_tree_obj(tree)
-                        self.memory.add_raw("yo", "zarandee", "arbol", poignancy=4.0,
-                                            keywords=["arbol", "manzana", "hambre"])
-                        self._seek_dir = (0, 0)
-                    else:
-                        self._steer_toward(tree.px, tree.py)
-                    return
-
         if urgent is None:
-            self._release_target()
+            if not self._update_carrying(world):
+                self._reset_seeking()
             return
 
-        # --- Buscar nuevo target si el actual no es valido ---
-        if (self._target_obj is None
-                or self._target_obj.need != urgent
-                or not self._target_obj.can_use(self.id)):
-            self._release_target()
-            self._target_obj = world.nearest_for_need(urgent, self.x, self.y, self.id)
+        self._cancel_carrying()
+        self._shake_target = None
+
+        self._refresh_target(urgent, world)
 
         if self._target_obj is None:
-            self._seek_dir = (0, 0)
+            self._clear_path()
             return
 
         if self._target_obj.in_range(self.x, self.y):
-            used = self._target_obj.use(self.id, self.needs)
-            if used:
-                self._using_obj = True
-                self._use_timer = 0.0
-                self._seek_dir  = (0, 0)
-                self.memory.add_raw(
-                    subject="yo", predicate="use",
-                    object_=self._target_obj.type.name.lower(),
-                    poignancy=5.0,
-                    keywords=[urgent, self._target_obj.type.name.lower()],
-                )
-            else:
-                # Objeto ocupado por otra criatura
-                self._release_target()
+            self._try_use_target(urgent)
         else:
-            self._steer_toward(self._target_obj.px, self._target_obj.py)
+            self._navigate_to(self._target_obj.px, self._target_obj.py, world)
 
-    def _steer_toward(self, tx: float, ty: float) -> None:
-        """Establece la direccion cardinal mas cercana al destino."""
-        dx = tx - self.x
-        dy = ty - self.y
-        if abs(dx) >= abs(dy):
-            self._seek_dir = (1 if dx > 0 else -1, 0)
+    def _handle_active_use(self, delta: float) -> bool:
+        from config import OBJ_USE_DURATION
+        if not (self._using_obj and self._target_obj is not None):
+            return False
+        self._use_timer += delta
+        duration = OBJ_USE_DURATION.get(self._target_obj.type.name, 3.0)
+        if self._use_timer < duration:
+            self._clear_path()
         else:
-            self._seek_dir = (0, 1 if dy > 0 else -1)
+            self._using_obj  = False
+            self._use_timer  = 0.0
+            self._target_obj = None
+        return True
 
     # ------------------------------------------------------------------
-    # Movimiento por cuadricula
+    # Alimentacion: manzanas en suelo -> sacudir arbol
+    # ------------------------------------------------------------------
+
+    def _seek_food(self, world) -> bool:
+        apple = world.nearest_apple(self.x, self.y)
+        if apple is not None:
+            self._shake_target = None
+            if apple.in_range(self.x, self.y):
+                world.pick_apple(apple, self.needs)
+                self.memory.add_raw("yo", "comi", "manzana", poignancy=5.0,
+                                    keywords=["manzana", "hambre"])
+                self._target_obj = None
+                self._using_obj  = False
+                self._clear_path()
+                logger.debug(f"{self.id}: ate apple")
+            else:
+                self._navigate_to(apple.x, apple.y, world)
+            return True
+
+        tree = world.nearest_shakeable_tree(self.x, self.y)
+        if tree is not None:
+            self._shake_target = tree
+            if tree.in_shake_range(self.x, self.y):
+                items = world.shake_tree_at(tree.px, tree.py)
+                self._shake_target = None
+                self._clear_path()
+                if items:
+                    self.memory.add_raw("yo", "sacudi", "arbol", poignancy=4.0,
+                                        keywords=["arbol", "manzana", "hambre"])
+                    logger.debug(f"{self.id}: shook tree ({tree.col},{tree.row}), "
+                                 f"{len(items)} apple(s)")
+            else:
+                self._navigate_to(tree.px, tree.py, world)
+            return True
+
+        return False
+
+    def _reset_seeking(self) -> None:
+        self._target_obj   = None
+        self._using_obj    = False
+        self._use_timer    = 0.0
+        self._shake_target = None
+        self._clear_path()
+
+    def _refresh_target(self, urgent: str, world) -> None:
+        if (self._target_obj is None
+                or self._target_obj.need != urgent
+                or not self._target_obj.can_use(self.id)):
+            self._target_obj = world.nearest_for_need(urgent, self.x, self.y, self.id)
+            self._use_timer  = 0.0
+            self._clear_path()
+
+    def _try_use_target(self, urgent: str) -> None:
+        used = self._target_obj.use(self.id, self.needs)
+        if used:
+            self._using_obj = True
+            self._use_timer = 0.0
+            self._clear_path()
+            self.memory.add_raw(
+                subject="yo", predicate="use",
+                object_=self._target_obj.type.name.lower(),
+                poignancy=5.0,
+                keywords=[urgent, self._target_obj.type.name.lower()],
+            )
+
+    # ------------------------------------------------------------------
+    # Acarreo autonomo al almacen
+    # ------------------------------------------------------------------
+
+    def _needs_comfortable(self) -> bool:
+        n = self.needs
+        return (
+            n.hunger    <= (NEED_MAX - CARRY_NEED_THRESHOLD)
+            and n.hygiene   >= CARRY_NEED_THRESHOLD
+            and n.happiness >= CARRY_NEED_THRESHOLD
+            and n.energy    >= CARRY_NEED_THRESHOLD
+        )
+
+    def _update_carrying(self, world) -> bool:
+        if not self._needs_comfortable():
+            self._cancel_carrying()
+            return False
+
+        store = world.nearest_store(self.x, self.y)
+        if store is None:
+            return False
+
+        if self._carrying is None:
+            return self._try_pick_resource(world, store)
+
+        return self._deliver_to_store(store, world)
+
+    def _try_pick_resource(self, world, store) -> bool:
+        apple = world.nearest_apple(self.x, self.y)
+        if apple is not None:
+            if apple.in_range(self.x, self.y):
+                if world.pick_apple_to_carry(apple):
+                    self._carrying    = "apple"
+                    self._carry_store = store
+                    self._clear_path()
+                    self.memory.add_raw("yo", "recogi_para_almacen", "manzana",
+                                        poignancy=4.0, keywords=["manzana", "almacen"])
+                    logger.info(f"{self.id}: picked apple to carry → "
+                                f"store ({store.col},{store.row})")
+            else:
+                self._navigate_to(apple.x, apple.y, world)
+            return True
+
+        if world.wood > 0:
+            world.wood -= 1
+            self._carrying    = "wood"
+            self._carry_store = store
+            self._clear_path()
+            self.memory.add_raw("yo", "recogi_para_almacen", "madera",
+                                poignancy=4.0, keywords=["madera", "almacen"])
+            logger.info(f"{self.id}: picked wood → store ({store.col},{store.row}), "
+                        f"world.wood={world.wood}")
+            return True
+
+        return False
+
+    def _deliver_to_store(self, store, world) -> bool:
+        self._carry_store = store
+
+        if store.in_range(self.x, self.y):
+            if self._carrying == "apple":
+                store.deposit_apple(1)
+                self.memory.add_raw("yo", "deposite", "manzana",
+                                    poignancy=3.0, keywords=["manzana", "almacen"])
+                logger.info(f"{self.id}: deposited apple → "
+                            f"store ({store.col},{store.row}) "
+                            f"[apples={store.stored_apples} wood={store.stored_wood}]")
+            elif self._carrying == "wood":
+                store.deposit_wood(1)
+                self.memory.add_raw("yo", "deposite", "madera",
+                                    poignancy=3.0, keywords=["madera", "almacen"])
+                logger.info(f"{self.id}: deposited wood → "
+                            f"store ({store.col},{store.row}) "
+                            f"[apples={store.stored_apples} wood={store.stored_wood}]")
+            self._cancel_carrying()
+            return False  # tarea completada: ya no hay carga activa
+
+        self._navigate_to(store.px, store.py, world)
+        return True  # aún navegando hacia el almacén
+
+    def _cancel_carrying(self) -> None:
+        self._carrying    = None
+        self._carry_store = None
+
+    # ------------------------------------------------------------------
+    # Movimiento por cuadricula — sigue el path A*
     # ------------------------------------------------------------------
 
     def _update_movement(self, delta: float, world=None) -> None:
@@ -257,20 +442,27 @@ class Creature:
 
     def _pick_next_cell(self, world) -> tuple[int, int]:
         """
-        Devuelve la celda adyacente a la que moverse.
-        Si hay seek_dir, prioriza esa direccion con fallback a perpendiculares.
-        Si no, deambula cuando expira el timer.
+        Siguiente celda a la que moverse.
+        Prioridad: seguir path A* > deambular al expirar el timer.
         """
-        if self._seek_dir != (0, 0):
-            dc, dr = self._seek_dir
-            nc, nr = self.grid_col + dc, self.grid_row + dr
-            if self._cell_valid(nc, nr, world):
-                return nc, nr
-            perp = [(-dr, dc), (dr, -dc)]
-            random.shuffle(perp)
-            result = self._try_directions(perp, world)
-            return result if result is not None else (self.grid_col, self.grid_row)
+        if self._path:
+            next_col, next_row = self._path[0]
+            if self._cell_valid(next_col, next_row, world):
+                self._path.pop(0)
+                return next_col, next_row
+            else:
+                # Celda del path bloqueada: limpiar, el siguiente tick de seeking
+                # llamara a _navigate_to y recomputara el path.
+                self._path      = []
+                self._path_goal = None
+                # Intentar avanzar en cualquier direccion libre como fallback inmediato
+                dirs = list(_DIRECTIONS)
+                random.shuffle(dirs)
+                result = self._try_directions(dirs, world)
+                if result is not None:
+                    return result
 
+        # Deambulacion aleatoria cuando no hay path activo
         if self._wander_timer >= self._wander_interval:
             self._wander_timer    = 0.0
             self._wander_interval = random.uniform(*WANDER_INTERVAL)
@@ -282,7 +474,7 @@ class Creature:
 
         return self.grid_col, self.grid_row
 
-    def _try_directions(self, dirs: list, world) -> tuple[int, int] | None:
+    def _try_directions(self, dirs: list, world) -> Optional[tuple[int, int]]:
         for dc, dr in dirs:
             nc, nr = self.grid_col + dc, self.grid_row + dr
             if self._cell_valid(nc, nr, world):
@@ -353,14 +545,14 @@ class Creature:
     # ------------------------------------------------------------------
 
     def ready_to_reproduce(self) -> bool:
-        if self.age < REPRODUCTION_MIN_AGE:       return False
-        if self._reproduction_cooldown > 0:        return False
+        if self.age < REPRODUCTION_MIN_AGE:   return False
+        if self._reproduction_cooldown > 0:    return False
         n = self.needs
         return (
-            n.hunger    <= (100.0 - REPRODUCTION_NEED_THRESHOLD) and
-            n.hygiene   >= REPRODUCTION_NEED_THRESHOLD and
-            n.happiness >= REPRODUCTION_NEED_THRESHOLD and
-            n.energy    >= REPRODUCTION_NEED_THRESHOLD
+            n.hunger    <= (100.0 - REPRODUCTION_NEED_THRESHOLD)
+            and n.hygiene   >= REPRODUCTION_NEED_THRESHOLD
+            and n.happiness >= REPRODUCTION_NEED_THRESHOLD
+            and n.energy    >= REPRODUCTION_NEED_THRESHOLD
         )
 
     def spawn_offspring(self, offspring_id: str) -> "Creature":
@@ -386,11 +578,12 @@ class Creature:
         self._reproduction_cooldown = REPRODUCTION_COOLDOWN
         self.memory.add_raw("yo", "me_dividi_en", offspring_id, poignancy=9.0,
                             keywords=["division", offspring_id])
-        logger.info(f"Creature {self.id} (g{self.generation}) -> {offspring_id} (g{offspring.generation})")
+        logger.info(f"Creature {self.id} (g{self.generation}) → "
+                    f"{offspring_id} (g{offspring.generation})")
         return offspring
 
     # ------------------------------------------------------------------
-    # Propiedades
+    # Propiedades publicas
     # ------------------------------------------------------------------
 
     @property
@@ -400,6 +593,14 @@ class Creature:
     @property
     def using_obj(self) -> bool:
         return self._using_obj
+
+    @property
+    def carrying(self) -> Optional[str]:
+        return self._carrying
+
+    @property
+    def shake_target(self):
+        return self._shake_target
 
     @property
     def pos(self) -> tuple[float, float]:
@@ -436,7 +637,7 @@ class Creature:
             sy = data.get("y", self.y)
             self.grid_col = int(clamp(sx // GRID_CELL, 0, _MAX_COL))
             self.grid_row = int(clamp(sy // GRID_CELL, 0, _MAX_ROW))
-        self.x, self.y      = _cell_center(self.grid_col, self.grid_row)
+        self.x, self.y = _cell_center(self.grid_col, self.grid_row)
         self._target_col    = self.grid_col
         self._target_row    = self.grid_row
         self._move_progress = 1.0
@@ -447,7 +648,9 @@ class Creature:
         return True
 
     def __repr__(self) -> str:
+        carry = f", carrying={self._carrying}" if self._carrying else ""
+        path  = f", path={len(self._path)}steps" if self._path else ""
         return (
             f"Creature({self.id!r}, cell=({self.grid_col},{self.grid_row}), "
-            f"pos=({self.x:.0f},{self.y:.0f}), {self.needs})"
+            f"pos=({self.x:.0f},{self.y:.0f}), {self.needs}{carry}{path})"
         )
