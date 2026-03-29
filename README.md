@@ -16,6 +16,7 @@ Creatures are born one at a time and reproduce asexually when healthy enough —
 |---|---|
 | Rendering + input | Pygame |
 | Agent logic | Pure Python |
+| Pathfinding | A* over grid cells |
 | User communication | Ollama + Llama 3.2 3B (event-driven) |
 | No HTTP, no Flask, no external engine | Everything in a single process |
 
@@ -29,7 +30,7 @@ swarm-alife/
 ├── utils.py                       # Shared utilities
 ├── requirements.txt
 ├── agent/
-│   ├── creature.py                # Creature orchestrator
+│   ├── creature.py                # Creature orchestrator + A* navigation
 │   ├── needs.py                   # Needs system
 │   ├── social.py                  # Emergent social behaviour
 │   ├── communication.py           # Event-driven LLM (separate thread)
@@ -39,7 +40,8 @@ swarm-alife/
 │       └── sim_clock.py           # Simulated clock
 ├── world/
 │   ├── objects.py                 # World objects, apple system, WorldMap
-│   └── placement.py               # Drag & drop placement state
+│   ├── placement.py               # Drag & drop placement state
+│   └── progression.py             # Level progression singleton (GameProgress)
 ├── render/
 │   └── renderer.py                # Pygame renderer (drawing only)
 └── data/                          # Per-creature persistent memory (not tracked)
@@ -61,7 +63,8 @@ python main.py
 | Left click on tree | Shake tree (drop apples) |
 | Drag from palette → world | Place object |
 | Right click on object | Remove object |
-| Keys 1–4 | Select object type in palette |
+| Axe tool (palette) | Toggle axe mode |
+| Left click on tree (axe mode) | Chop tree |
 | F | Feed (selected or all) |
 | D | Shower (selected or all) |
 | J | Play (selected or all) |
@@ -71,20 +74,29 @@ python main.py
 
 ## World objects
 
-| Object | Effect |
-|---|---|
-| Tree | Blocks movement. ~60% chance to grow apples. Shake to drop them. |
-| Bath | Restores hygiene. Player-initiated only. |
-| Ball | Boosts happiness. Creatures seek it autonomously when unhappy. |
-| Bed | Restores energy. Creatures seek it autonomously when tired. |
+| Object | Size | Effect |
+|---|---|---|
+| Tree | 1×1 | Blocks movement. ~60% chance to grow apples. Shake to drop them. Choppable with axe. |
+| Bath | 1×1 | Restores hygiene. Creatures seek it autonomously when dirty. |
+| Ball | 1×1 | Boosts happiness. Creatures seek it autonomously when unhappy. |
+| Bed | 1×1 | Restores energy. Creatures seek it autonomously when tired. |
+| Store | 2×2 | Receives apples and wood carried by comfortable creatures. |
 
-Apples fall to the ground when a tree is shaken, rot after 30 seconds, and are picked up automatically by hungry creatures nearby.
+Apples fall to the ground when a tree is shaken, rot after 30 seconds, and are picked up automatically by hungry creatures nearby. Chopped trees leave a stump that disappears after a few seconds, yielding wood.
 
 ## Creature behaviour
 
-Creatures wander autonomously and seek world objects when a need crosses its seeking threshold. When they reach an object they stop for a few seconds before moving on. Behaviour is influenced by proximity to neighbours — nearby hungry creatures spread anxiety; being close to others boosts happiness.
+Creatures navigate via A* pathfinding over a 40px grid. They wander autonomously and seek world objects when a need crosses its seeking threshold. When they reach an object they use it for a fixed duration before moving on. If the path becomes blocked mid-route, it is recomputed automatically.
 
-Visual states reflect internal needs: normal (green), hungry (yellow), sad (blue), tired (grey), critical (red with pulsing ring).
+Behaviour is influenced by proximity to neighbours — nearby hungry creatures spread anxiety; being close to others boosts happiness. Visual states reflect internal needs: normal (green), hungry (yellow), sad (blue), tired (grey), critical (red with pulsing ring).
+
+### Autonomous carrying
+
+When all of a creature's needs are above a comfort threshold (`CARRY_NEED_THRESHOLD`), it will autonomously pick up ground apples or loose wood and carry them to the nearest store. A small icon above the creature shows what it is carrying. Carrying is cancelled immediately if any need drops below the threshold.
+
+## Progression
+
+The game starts at level 1. When the colony reaches 3 creatures, level 2 unlocks: trees begin growing apples over time and creatures will shake them autonomously when hungry. A notification is displayed briefly when the level changes.
 
 ## Reproduction
 
@@ -101,6 +113,7 @@ The LLM is never polled continuously. It is invoked only when a creature crosses
 3. Localised strings in `locales.py`
 4. Per-creature persistent memory in `data/` via atomic writes
 5. Explicit LLM error logging — never silent
+6. Renderer writes geometry onto shared placement object — single source of truth for hit-testing
 
 ## Research goals
 
