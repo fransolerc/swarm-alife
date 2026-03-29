@@ -13,7 +13,7 @@ setup_logging()
 from config import (
     FPS, WINDOW_WIDTH, WINDOW_HEIGHT, WINDOW_TITLE,
     NUM_CREATURES, CREATURE_RADIUS, DATA_DIR,
-    TOOLBAR_HEIGHT,
+    TOOLBAR_HEIGHT, DIARY_FILE, GEM_DEPOSIT_COUNT,
 )
 from agent.creature import Creature
 from agent.social import update_social
@@ -87,14 +87,18 @@ def load_colony() -> list[Creature]:
 
 def save_world(world: WorldMap) -> None:
     os.makedirs(DATA_DIR, exist_ok=True)
-    atomic_write_json(_WORLD_FILE, world.to_list())
+    atomic_write_json(_WORLD_FILE, world.to_dict())
 
 
 def load_world(world: WorldMap) -> None:
-    data = load_json(_WORLD_FILE, default=[])
+    data = load_json(_WORLD_FILE, default=None)
     if data:
-        world.from_list(data)
-        logger.info(f"World loaded: {len(world)} objects")
+        world.from_dict(data)
+        logger.info(f"World loaded: {len(world)} objects, {len(world.deposits())} deposits")
+    else:
+        # Mundo nuevo: generar yacimientos
+        world.generate_deposits(GEM_DEPOSIT_COUNT)
+        logger.info(f"New world: {len(world.deposits())} deposits generated")
 
 
 # ---------------------------------------------------------------
@@ -136,12 +140,24 @@ def _handle_keydown(
     creatures: list[Creature],
     selected: Creature | None,
     world: WorldMap,
-) -> bool:
+    show_diary: bool,
+    diary_entries: list,
+) -> tuple[bool, bool, list]:
+    """
+    Devuelve (quit, nuevo_show_diary, nuevas_diary_entries).
+    Tab alterna el overlay del diario y carga las entradas al abrir.
+    """
     if event.key == pygame.K_ESCAPE:
-        return True
+        return True, show_diary, diary_entries
+
+    if event.key == pygame.K_TAB:
+        new_show = not show_diary
+        new_entries = load_json(DIARY_FILE, default=[]) if new_show else diary_entries
+        return False, new_show, new_entries
+
     targets = [selected] if selected else creatures
     _apply_action_key(event.key, targets, selected, creatures, world)
-    return False
+    return False, show_diary, diary_entries
 
 
 def _handle_left_click(
@@ -152,20 +168,16 @@ def _handle_left_click(
     placement: PlacementMode,
     world: WorldMap,
 ) -> Creature | None:
-    # Seleccionar criatura
     clicked = find_creature_at(creatures, mx, my)
     if clicked:
         if selected: selected.selected = False
         clicked.selected = True
         return clicked
 
-    # Hacha: talar árbol
     if placement.tool == ToolMode.AXE:
         world.chop_tree_at(mx, my)
         return selected
 
-    # Clic en área vacía: deseleccionar
-    # Nota: los árboles solo se zarandean por las criaturas, no por clic del jugador
     if selected:
         selected.selected = False
     return None
@@ -261,8 +273,12 @@ def main() -> None:
     selected: Creature | None = None
     pending_spawn: list[Creature] = []
 
+    show_diary:    bool = False
+    diary_entries: list = []
+
     load_world(world)
-    logger.info(f"swarm-alife started — {len(creatures)} creature(s), {len(world)} object(s)")
+    logger.info(f"swarm-alife started — {len(creatures)} creature(s), {len(world)} object(s), "
+                f"{len(world.deposits())} deposits")
 
     running = True
     while running:
@@ -272,7 +288,10 @@ def main() -> None:
             if event.type == pygame.QUIT:
                 running = False
             elif event.type == pygame.KEYDOWN:
-                if _handle_keydown(event, creatures, selected, world):
+                quit_, show_diary, diary_entries = _handle_keydown(
+                    event, creatures, selected, world, show_diary, diary_entries
+                )
+                if quit_:
                     running = False
             elif event.type in (pygame.MOUSEMOTION, pygame.MOUSEBUTTONDOWN, pygame.MOUSEBUTTONUP):
                 selected = _handle_mouse_event(event, creatures, selected, placement, world)
@@ -286,6 +305,8 @@ def main() -> None:
             world=world,
             placement=placement,
             delta=delta,
+            show_diary=show_diary,
+            diary_entries=diary_entries,
         )
 
     logger.info(f"Shutting down. Population: {len(creatures)}")

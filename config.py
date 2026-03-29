@@ -110,6 +110,15 @@ SHAKE_COOLDOWN     = 2.0
 APPLE_TREE_CHANCE  = 0.6
 APPLE_SHAKE_RANGE  = GRID_CELL + 4
 
+# --- Yacimientos y minas ---
+GEM_DEPOSIT_COUNT     = 4      # yacimientos generados al inicio del mundo
+MINE_EXTRACT_COOLDOWN = 12.0   # segundos entre extracciones de gema por criatura
+
+# --- Escritura (diario LLM) ---
+WRITING_GEM_COST  = 3      # gemas que cuesta cada entrada de diario
+WRITING_COOLDOWN  = 90.0   # segundos entre escrituras por criatura
+DIARY_FILE        = "data/diary.json"
+
 PLACEMENT_GRID_COLOR    = (58,  82,  40)
 PLACEMENT_HOVER_COLOR   = (144, 224, 112)
 PLACEMENT_BLOCKED_COLOR = (200, 80,  60)

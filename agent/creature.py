@@ -19,6 +19,7 @@ from config import (
     REPRODUCTION_COOLDOWN, OFFSPRING_NEED_VARIANCE,
     NEED_MIN, NEED_MAX, GRID_CELL,
     CARRY_NEED_THRESHOLD, APPLE_HUNGER_VALUE,
+    WRITING_GEM_COST, WRITING_COOLDOWN,
 )
 from utils import clamp, distance, atomic_write_json, load_json, extract_keywords
 
@@ -85,6 +86,8 @@ class Creature:
         self._carrying: Optional[str] = None
         self._carry_store              = None
 
+        self._writing_cooldown: float = 0.0   # segundos hasta que puede volver a escribir
+
         self.anim_t: float     = random.uniform(0, 6.28)
         self.speed_real: float = 0.0
 
@@ -95,10 +98,6 @@ class Creature:
     # ------------------------------------------------------------------
 
     def _astar(self, goal_col: int, goal_row: int, world) -> list[tuple[int, int]]:
-        """
-        A* desde la celda actual hasta (goal_col, goal_row).
-        Si el goal está bloqueado acepta cualquier celda libre adyacente.
-        """
         start = (self.grid_col, self.grid_row)
         goal  = (goal_col, goal_row)
 
@@ -170,10 +169,6 @@ class Creature:
     # ------------------------------------------------------------------
 
     def _release_target(self) -> None:
-        """
-        Libera el objeto objetivo actual y resetea todo el estado de uso.
-        Llamar siempre que se abandone o termine de usar un objeto.
-        """
         if self._target_obj is not None:
             self._target_obj.release(self.id)
         self._target_obj = None
@@ -188,9 +183,14 @@ class Creature:
         self.age += delta
         if self._reproduction_cooldown > 0:
             self._reproduction_cooldown -= delta
+        if self._writing_cooldown > 0:
+            self._writing_cooldown = max(0.0, self._writing_cooldown - delta)
 
         if world is not None:
             self._update_seeking(delta, world)
+            # La escritura es asíncrona: no bloquea ni compite con el seeking
+            if self._needs_comfortable() and self._writing_cooldown <= 0:
+                self._check_writing(world)
 
         self._update_movement(delta, world=world)
         triggered = self.needs.update(delta, is_night)
@@ -246,7 +246,6 @@ class Creature:
         if self._use_timer < duration:
             self._clear_path()
         else:
-            # Uso completado: liberar objeto antes de limpiar referencia
             self._release_target()
         return True
 
@@ -255,10 +254,9 @@ class Creature:
     # ------------------------------------------------------------------
 
     def _seek_food(self, world) -> bool:
-        # 0. Prioridad máxima: comer del almacén si hay algo
+        # 0. Comer del almacén si hay manzanas guardadas
         store = world.nearest_store_with_apples(self.x, self.y)
         if store is not None:
-            # Para el almacén (2x2), el rango debe ser mayor (aprox sqrt(60^2+20^2) = 63.2)
             if distance(self.pos, store.pos) <= 70:
                 if store.take_apple():
                     self.needs.feed_amount(APPLE_HUNGER_VALUE)
@@ -272,7 +270,7 @@ class Creature:
                 self._navigate_to(store.px, store.py, world)
             return True
 
-        # 1. Prioridad: manzanas que ya estén en el suelo
+        # 1. Manzanas en el suelo
         apple = world.nearest_apple(self.x, self.y)
         if apple is not None:
             self._shake_target = None
@@ -288,7 +286,7 @@ class Creature:
                 self._navigate_to(apple.x, apple.y, world)
             return True
 
-        # 2. Si no hay en el suelo ni en almacén, ir a un árbol y comer directamente
+        # 2. Árbol: comer directamente
         tree = world.nearest_shakeable_tree(self.x, self.y)
         if tree is not None:
             self._shake_target = tree
@@ -307,16 +305,11 @@ class Creature:
         return False
 
     def _reset_seeking(self) -> None:
-        """Cancela el seeking activo, incluyendo liberación del objeto si estaba en uso."""
         self._release_target()
         self._shake_target = None
         self._clear_path()
 
     def _refresh_target(self, urgent: str, world) -> None:
-        """
-        Actualiza el objeto objetivo si el actual no es válido para la necesidad urgente.
-        Libera el objeto anterior antes de asignar uno nuevo.
-        """
         if (self._target_obj is None
                 or self._target_obj.need != urgent
                 or not self._target_obj.can_use(self.id)):
@@ -365,7 +358,7 @@ class Creature:
         return self._deliver_to_store(store, world)
 
     def _try_pick_resource(self, world, store) -> bool:
-        # 1. Buscar manzanas en el suelo
+        # 1. Manzanas en el suelo
         apple = world.nearest_apple(self.x, self.y)
         if apple is not None:
             if apple.in_range(self.x, self.y):
@@ -380,7 +373,22 @@ class Creature:
                 self._navigate_to(apple.x, apple.y, world)
             return True
 
-        # 2. Si no hay manzanas en suelo, buscar madera de tocones
+        # 2. Mina: extraer gema
+        mine = world.nearest_mine(self.x, self.y)
+        if mine is not None:
+            if mine.in_range(self.x, self.y):
+                if mine.extract_gem(self.id):
+                    self._carrying    = "gem"
+                    self._carry_store = store
+                    self._clear_path()
+                    self.memory.add_raw("yo", "extraje_para_almacen", "gema",
+                                        poignancy=6.0, keywords=["gema", "mina", "almacen"])
+                    logger.info(f"{self.id}: extracted gem → store ({store.col},{store.row})")
+            else:
+                self._navigate_to(mine.px, mine.py, world)
+            return True
+
+        # 3. Tocones: madera
         stump = world.nearest_stump(self.x, self.y)
         if stump is not None:
             if distance(self.pos, stump.pos) <= 50:
@@ -397,7 +405,7 @@ class Creature:
                 self._navigate_to(stump.px, stump.py, world)
             return True
 
-        # 3. Finalmente, buscar manzanas de árboles
+        # 4. Árboles: cosechar manzana para llevar
         tree = world.nearest_shakeable_tree(self.x, self.y)
         if tree is not None:
             if tree.in_shake_range(self.x, self.y):
@@ -418,7 +426,6 @@ class Creature:
     def _deliver_to_store(self, store, world) -> bool:
         self._carry_store = store
 
-        # Rango generoso para el almacén (2x2 bloqueado)
         if distance(self.pos, store.pos) <= 70:
             if self._carrying == "apple":
                 store.deposit_apple(1)
@@ -426,14 +433,24 @@ class Creature:
                                     poignancy=3.0, keywords=["manzana", "almacen"])
                 logger.info(f"{self.id}: deposited apple → "
                             f"store ({store.col},{store.row}) "
-                            f"[apples={store.stored_apples} wood={store.stored_wood}]")
+                            f"[apples={store.stored_apples} wood={store.stored_wood} "
+                            f"gems={store.stored_gems}]")
             elif self._carrying == "wood":
                 store.deposit_wood(1)
                 self.memory.add_raw("yo", "deposite", "madera",
                                     poignancy=3.0, keywords=["madera", "almacen"])
                 logger.info(f"{self.id}: deposited wood → "
                             f"store ({store.col},{store.row}) "
-                            f"[apples={store.stored_apples} wood={store.stored_wood}]")
+                            f"[apples={store.stored_apples} wood={store.stored_wood} "
+                            f"gems={store.stored_gems}]")
+            elif self._carrying == "gem":
+                store.deposit_gem(1)
+                self.memory.add_raw("yo", "deposite", "gema",
+                                    poignancy=5.0, keywords=["gema", "almacen"])
+                logger.info(f"{self.id}: deposited gem → "
+                            f"store ({store.col},{store.row}) "
+                            f"[apples={store.stored_apples} wood={store.stored_wood} "
+                            f"gems={store.stored_gems}]")
             self._cancel_carrying()
             return False
 
@@ -443,6 +460,23 @@ class Creature:
     def _cancel_carrying(self) -> None:
         self._carrying    = None
         self._carry_store = None
+
+    # ------------------------------------------------------------------
+    # Escritura de diario
+    # ------------------------------------------------------------------
+
+    def _check_writing(self, world) -> None:
+        """
+        Si hay gemas suficientes en algún almacén y ha pasado el cooldown,
+        gasta las gemas y lanza la escritura LLM asíncrona.
+        """
+        store = world.nearest_store(self.x, self.y)
+        if store is None or store.stored_gems < WRITING_GEM_COST:
+            return
+        store.stored_gems -= WRITING_GEM_COST
+        self._writing_cooldown = WRITING_COOLDOWN
+        from agent.writing import trigger_writing
+        trigger_writing(self, WRITING_GEM_COST)
 
     # ------------------------------------------------------------------
     # Movimiento por cuadricula — sigue el path A*
