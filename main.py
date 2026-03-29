@@ -19,7 +19,7 @@ from agent.creature import Creature
 from agent.social import update_social
 from agent.communication import trigger_llm_message
 from agent.memory.sim_clock import SimClock
-from world.objects import WorldMap, ObjType
+from world.objects import WorldMap
 from world.placement import PlacementMode, ToolMode
 from render.renderer import Renderer
 
@@ -40,7 +40,6 @@ def _next_id() -> str:
 
 
 def _seed_id_counter(ids: list[str]) -> None:
-    """Avanza el contador global para que no colisione con ID ya existentes."""
     global _id_counter
     for cid in ids:
         if cid.startswith("sw"):
@@ -56,25 +55,19 @@ def _seed_id_counter(ids: list[str]) -> None:
 # ---------------------------------------------------------------
 
 def save_colony(creatures: list[Creature]) -> None:
-    """Guarda los ID de toda la colonia para poder restaurarla en la próxima sesión."""
     os.makedirs(DATA_DIR, exist_ok=True)
     atomic_write_json(_COLONY_FILE, [c.id for c in creatures])
 
 
 def load_colony() -> list[Creature]:
-    """
-    Carga la colonia completa desde la sesión anterior.
-    Si no existe registro previo, crea las criaturas iniciales.
-    """
     ids = load_json(_COLONY_FILE, default=[])
 
     if not ids:
-        # Primera ejecución: crear colonia inicial
         creatures = []
         for _ in range(NUM_CREATURES):
             cid = _next_id()
             c = Creature(cid)
-            c.load()          # no-op si no hay fichero guardado
+            c.load()
             creatures.append(c)
         logger.info(f"New colony started: {len(creatures)} creature(s)")
         return creatures
@@ -159,21 +152,20 @@ def _handle_left_click(
     placement: PlacementMode,
     world: WorldMap,
 ) -> Creature | None:
+    # Seleccionar criatura
     clicked = find_creature_at(creatures, mx, my)
     if clicked:
         if selected: selected.selected = False
         clicked.selected = True
         return clicked
 
+    # Hacha: talar árbol
     if placement.tool == ToolMode.AXE:
         world.chop_tree_at(mx, my)
         return selected
 
-    obj = world.get_at_px(mx, my)
-    if obj and obj.type == ObjType.TREE:
-        world.shake_tree_at(mx, my)
-        return selected
-
+    # Clic en área vacía: deseleccionar
+    # Nota: los árboles solo se zarandean por las criaturas, no por clic del jugador
     if selected:
         selected.selected = False
     return None
