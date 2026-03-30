@@ -113,6 +113,7 @@ class Creature:
             if (col, row) == goal:
                 return True
             if goal_blocked:
+                # Terminamos si estamos en una celda adyacente al objetivo bloqueado
                 return abs(col - goal_col) + abs(row - goal_row) == 1
             return False
 
@@ -223,6 +224,7 @@ class Creature:
                 self._reset_seeking()
             return
 
+        # Si hay una necesidad urgente (no hambre), dejamos de acarrear para atenderla
         self._cancel_carrying()
         self._shake_target = None
 
@@ -257,7 +259,7 @@ class Creature:
         # 0. Comer del almacén si hay manzanas guardadas
         store = world.nearest_store_with_apples(self.x, self.y)
         if store is not None:
-            if distance(self.pos, store.pos) <= 70:
+            if store.in_range(self.x, self.y):
                 if store.take_apple():
                     self.needs.feed_amount(APPLE_HUNGER_VALUE)
                     self.memory.add_raw("yo", "comi", "manzana_almacen", poignancy=5.0,
@@ -336,6 +338,7 @@ class Creature:
 
     def _needs_comfortable(self) -> bool:
         n = self.needs
+        # Umbral configurado en config.py (CARRY_NEED_THRESHOLD)
         return (
             n.hunger    <= (NEED_MAX - CARRY_NEED_THRESHOLD)
             and n.hygiene   >= CARRY_NEED_THRESHOLD
@@ -358,7 +361,7 @@ class Creature:
         return self._deliver_to_store(store, world)
 
     def _try_pick_resource(self, world, store) -> bool:
-        # 1. Manzanas en el suelo
+        # 1. Manzanas en el suelo (Máxima prioridad)
         apple = world.nearest_apple(self.x, self.y)
         if apple is not None:
             if apple.in_range(self.x, self.y):
@@ -369,13 +372,14 @@ class Creature:
                     self.memory.add_raw("yo", "recogi_para_almacen", "manzana",
                                         poignancy=4.0, keywords=["manzana", "almacen"])
                     logger.info(f"{self.id}: picked apple to carry → store ({store.col},{store.row})")
+                    return True
             else:
                 self._navigate_to(apple.x, apple.y, world)
-            return True
+                return True
 
         # 2. Mina: extraer gema
         mine = world.nearest_mine(self.x, self.y)
-        if mine is not None:
+        if mine is not None and mine.can_use(self.id):
             if mine.in_range(self.x, self.y):
                 if mine.extract_gem(self.id):
                     self._carrying    = "gem"
@@ -384,15 +388,16 @@ class Creature:
                     self.memory.add_raw("yo", "extraje_para_almacen", "gema",
                                         poignancy=6.0, keywords=["gema", "mina", "almacen"])
                     logger.info(f"{self.id}: extracted gem → store ({store.col},{store.row})")
+                    return True
             else:
                 self._navigate_to(mine.px, mine.py, world)
-            return True
+                return True
 
-        # 3. Tocones: madera
-        stump = world.nearest_stump(self.x, self.y)
-        if stump is not None:
-            if distance(self.pos, stump.pos) <= 50:
-                if world.wood > 0:
+        # 3. Tocones: madera (Solo si hay madera disponible en el mundo)
+        if world.wood > 0:
+            stump = world.nearest_stump(self.x, self.y)
+            if stump is not None:
+                if distance(self.pos, stump.pos) <= 60: # Rango suficiente para diagonales
                     world.wood -= 1
                     self._carrying    = "wood"
                     self._carry_store = store
@@ -401,9 +406,10 @@ class Creature:
                                         poignancy=4.0, keywords=["madera", "almacen"])
                     logger.info(f"{self.id}: picked wood from stump → "
                                 f"store ({store.col},{store.row}), world.wood={world.wood}")
-            else:
-                self._navigate_to(stump.px, stump.py, world)
-            return True
+                    return True
+                else:
+                    self._navigate_to(stump.px, stump.py, world)
+                    return True
 
         # 4. Árboles: cosechar manzana para llevar
         tree = world.nearest_shakeable_tree(self.x, self.y)
@@ -417,16 +423,17 @@ class Creature:
                                         poignancy=4.0, keywords=["manzana", "almacen"])
                     logger.info(f"{self.id}: harvested apple to carry → "
                                 f"store ({store.col},{store.row})")
+                    return True
             else:
                 self._navigate_to(tree.px, tree.py, world)
-            return True
+                return True
 
         return False
 
     def _deliver_to_store(self, store, world) -> bool:
         self._carry_store = store
 
-        if distance(self.pos, store.pos) <= 70:
+        if store.in_range(self.x, self.y):
             if self._carrying == "apple":
                 store.deposit_apple(1)
                 self.memory.add_raw("yo", "deposite", "manzana",

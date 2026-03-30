@@ -1,6 +1,6 @@
 # =============================================================================
 # utils.py — swarm-alife
-# Utilidades compartidas. Sin dependencias de Pygame ni LLM.
+# Utilidades compartidas.
 # =============================================================================
 
 import os
@@ -9,45 +9,71 @@ import tempfile
 import logging
 import math
 import random
+import threading
+import time
 from typing import Any
 
 logger = logging.getLogger(__name__)
 
+# Mutex global para asegurar acceso exclusivo a archivos.
+# Previene errores de "PermissionError" en Windows cuando varios hilos 
+# intentan manipular el mismo archivo (diario, estados de criaturas, etc).
+_file_lock = threading.RLock()
 
-# --- Escritura atómica ---
 
 def atomic_write_json(path: str, data: Any) -> None:
-    """Escribe data como JSON en path de forma atómica (via tempfile).
-    Evita corrupción si el proceso se interrumpe durante la escritura.
-    """
+    """Escribe data como JSON en path de forma atómica."""
     dir_path = os.path.dirname(path) or "."
     os.makedirs(dir_path, exist_ok=True)
-    try:
-        with tempfile.NamedTemporaryFile(
-            mode="w",
-            dir=dir_path,
-            delete=False,
-            suffix=".tmp",
-            encoding="utf-8"
-        ) as tmp:
-            json.dump(data, tmp, ensure_ascii=False, indent=2)
-            tmp_path = tmp.name
-        os.replace(tmp_path, path)
-    except Exception as e:
-        logger.error(f"atomic_write_json failed for {path}: {e}")
-        raise
+    
+    with _file_lock:
+        fd, tmp_path = tempfile.mkstemp(dir=dir_path, suffix=".tmp")
+        try:
+            with os.fdopen(fd, 'w', encoding='utf-8') as tmp:
+                json.dump(data, tmp, ensure_ascii=False, indent=2)
+            
+            # En Windows, os.replace puede fallar momentáneamente si el archivo 
+            # acaba de cerrarse. Intentamos un par de veces.
+            for i in range(5):
+                try:
+                    os.replace(tmp_path, path)
+                    break
+                except PermissionError:
+                    if i == 4: raise
+                    time.sleep(0.01 * (i + 1))
+        except Exception as e:
+            if os.path.exists(tmp_path):
+                try: os.remove(tmp_path)
+                except: pass
+            logger.error(f"atomic_write_json failed for {path}: {e}")
+            raise
 
 
 def load_json(path: str, default: Any = None) -> Any:
-    """Carga JSON desde path. Devuelve default si no existe o hay error."""
-    if not os.path.exists(path):
-        return default
-    try:
-        with open(path, "r", encoding="utf-8") as f:
-            return json.load(f)
-    except Exception as e:
-        logger.error(f"load_json failed for {path}: {e}")
-        return default
+    """Carga JSON desde path de forma segura."""
+    with _file_lock:
+        if not os.path.exists(path):
+            return default
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                return json.load(f)
+        except Exception as e:
+            logger.error(f"load_json failed for {path}: {e}")
+            return default
+
+
+def safe_append_text(path: str, text: str) -> None:
+    """Añade texto a un archivo de forma segura bajo el lock global."""
+    dir_path = os.path.dirname(path) or "."
+    if dir_path and not os.path.exists(dir_path):
+        os.makedirs(dir_path, exist_ok=True)
+        
+    with _file_lock:
+        try:
+            with open(path, "a", encoding="utf-8") as f:
+                f.write(text)
+        except Exception as e:
+            logger.error(f"safe_append_text failed for {path}: {e}")
 
 
 # --- Extracción de keywords ---
@@ -67,9 +93,7 @@ _STOPWORDS_EN = {
     "feel", "feeling", "very", "so", "am", "now",
 }
 
-
 _PUNCTUATION = ".,;:!?\"'()[]"
-
 
 def extract_keywords(text: str, language: str = "es", max_keywords: int = 8) -> list[str]:
     """Extrae keywords relevantes de un texto eliminando stopwords."""

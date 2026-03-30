@@ -1,7 +1,6 @@
 # =============================================================================
 # agent/writing.py — swarm-alife
-# Escritura de diario event-driven. Se invoca cuando una criatura cómoda
-# dispone de gemas suficientes en el almacén. Nunca bloquea el loop principal.
+# Escritura de diario event-driven. 
 # =============================================================================
 
 import logging
@@ -12,7 +11,7 @@ from datetime import datetime
 from typing import TYPE_CHECKING
 
 from config import OLLAMA_MODEL, LANGUAGE, DIARY_FILE
-from utils import atomic_write_json, load_json
+from utils import atomic_write_json, load_json, safe_append_text
 
 if TYPE_CHECKING:
     from agent.creature import Creature
@@ -23,11 +22,7 @@ _DIARY_MD = DIARY_FILE.replace(".json", ".md")
 
 
 def trigger_writing(creature: "Creature", gems_spent: int) -> None:
-    """
-    Lanza la escritura de diario en un hilo separado.
-    No bloquea el loop de Pygame. La entrada se escribe en data/diary.json
-    y en data/diary.md cuando el LLM responde.
-    """
+    """Lanza la escritura de diario en un hilo separado para no bloquear el juego."""
     thread = threading.Thread(
         target=_writing_call,
         args=(creature, gems_spent),
@@ -103,7 +98,7 @@ def _writing_call(creature: "Creature", gems_spent: int) -> None:
 
 
 def _append_diary(creature_id: str, text: str, gems: int) -> None:
-    """Persiste la entrada en diary.json y diary.md de forma atómica."""
+    """Persiste la entrada en diario.json y diario.md de forma segura."""
     os.makedirs("data", exist_ok=True)
 
     entry = {
@@ -114,17 +109,19 @@ def _append_diary(creature_id: str, text: str, gems: int) -> None:
         "datetime":    datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
     }
 
-    # JSON estructurado (para el overlay in-game)
+    # JSON estructurado para el overlay del juego (usa el lock de utils para atomic_write)
+    # Recargamos siempre el archivo actual para no perder entradas si otros hilos escribieron
     entries = load_json(DIARY_FILE, default=[])
     entries.append(entry)
     atomic_write_json(DIARY_FILE, entries)
 
     # Markdown legible fuera del juego
-    write_header = not os.path.exists(_DIARY_MD)
-    with open(_DIARY_MD, "a", encoding="utf-8") as f:
-        if write_header:
-            f.write("# Diario de las criaturas — swarm-alife\n\n")
-        f.write(
-            f"## [{entry['datetime']}] {creature_id}  _(💎 ×{gems})_\n"
-            f"{text}\n\n"
-        )
+    header = ""
+    if not os.path.exists(_DIARY_MD):
+        header = "# Diario de las criaturas — swarm-alife\n\n"
+        
+    md_entry = (
+        f"{header}## [{entry['datetime']}] {creature_id}  _(💎 ×{gems})_\n"
+        f"{text}\n\n"
+    )
+    safe_append_text(_DIARY_MD, md_entry)

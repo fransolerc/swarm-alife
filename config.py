@@ -81,7 +81,7 @@ LLM_MAX_TOKENS = 80
 SIM_MINUTES_PER_REAL_MINUTE = 60
 
 GRID_CELL        = 40
-OBJECT_USE_RANGE = 38
+OBJECT_USE_RANGE = 80  # Ampliado para asegurar alcance a almacenes y objetos bloqueados
 
 TREE_BLOCKS_PATH      = True
 FOOD_HUNGER_REDUCTION = 100.0
@@ -94,21 +94,21 @@ OBJECT_USE_COOLDOWN = 8.0
 
 # --- Almacén ---
 STORE_SIZE           = 2     # 2×2 celdas (80×80 px)
-CARRY_NEED_THRESHOLD = 55.0  # umbral mínimo de comodidad para acarrear
+CARRY_NEED_THRESHOLD = 30.0  # Umbral más bajo para que trabajen más tiempo
 
 # --- Tala ---
-STUMP_DURATION = 15.0
+STUMP_DURATION = 90.0  # Más tiempo para recoger la madera antes de que el tronco desaparezca
 WOOD_PER_TREE  = 2
 
 # --- Manzanas ---
 APPLE_MAX_PER_TREE = 3
 APPLE_REGROW_TIME  = 45.0
-APPLE_ROT_TIME     = 30.0
-APPLE_PICK_RANGE   = 28.0
+APPLE_ROT_TIME     = 90.0  # Más tiempo para recoger manzanas del suelo
+APPLE_PICK_RANGE   = 80.0
 APPLE_HUNGER_VALUE = 30.0
 SHAKE_COOLDOWN     = 2.0
 APPLE_TREE_CHANCE  = 0.6
-APPLE_SHAKE_RANGE  = GRID_CELL + 4
+APPLE_SHAKE_RANGE  = 80.0
 
 # --- Yacimientos y minas ---
 GEM_DEPOSIT_COUNT     = 4      # yacimientos generados al inicio del mundo
