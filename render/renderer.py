@@ -6,6 +6,7 @@ import pygame
 import math
 import random
 import logging
+from typing import List
 
 from config import (
     WINDOW_WIDTH, WINDOW_HEIGHT, TOOLBAR_HEIGHT,
@@ -173,7 +174,7 @@ class Renderer:
             self._draw_gem_deposit(cx, cy)
 
     def _draw_gem_deposit(self, cx, cy):
-        # Sombra
+        # sombra
         s = pygame.Surface((34, 10), pygame.SRCALPHA)
         pygame.draw.ellipse(s, (0, 0, 0, 45), (0, 0, 34, 10))
         self.screen.blit(s, (cx-17, cy+8))
@@ -275,19 +276,6 @@ class Renderer:
         pygame.draw.arc(self.screen,(255,255,255),(cx-18,cy-10,36,20),math.pi,2*math.pi,2)
         _el(self.screen,(255,255,255),cx-7,cy-10,6,4)
 
-    def _draw_bed(self, cx, cy):
-        s = pygame.Surface((40,10), pygame.SRCALPHA)
-        pygame.draw.ellipse(s, (0,0,0,50), (0,0,40,10))
-        self.screen.blit(s, (cx-20,cy+12))
-        pygame.draw.rect(self.screen,(139,94,60),(cx-18,cy-2,36,20),border_radius=4)
-        pygame.draw.rect(self.screen,(212,168,112),(cx-16,cy-6,32,16),border_radius=3)
-        pygame.draw.rect(self.screen,(232,208,160),(cx-15,cy-6,30,10),border_radius=2)
-        pygame.draw.rect(self.screen,(240,232,208),(cx-14,cy-8,12,8),border_radius=3)
-        pygame.draw.rect(self.screen,(255,248,238),(cx-13,cy-7,10,6),border_radius=2)
-        for px_ in [-14,14]:
-            pygame.draw.rect(self.screen,(107,66,38),(cx+px_-2,cy+16,4,5),border_radius=1)
-        self.screen.blit(self.font_tiny.render("zzz",True,(200,216,240)),(cx+10,cy-18))
-
     def _draw_store(self, obj: WorldObject, cx: int, cy: int):
         half = int(obj.size * GRID_CELL / 2)
         left = cx - half
@@ -338,7 +326,7 @@ class Renderer:
 
     def _draw_mine(self, cx, cy):
         """Mina de gemas: estructura de madera sobre un yacimiento."""
-        # Sombra
+        # sombra
         s = pygame.Surface((44, 12), pygame.SRCALPHA)
         pygame.draw.ellipse(s, (0, 0, 0, 45), (0, 0, 44, 12))
         self.screen.blit(s, (cx-22, cy+10))
@@ -642,7 +630,8 @@ class Renderer:
 
     # --- Paleta de herramientas ---
 
-    def _palette_geometry(self, palette):
+    @staticmethod
+    def _palette_geometry(palette):
         n       = len(palette) + 1
         panel_w = n * (_BTN_SIZE + _BTN_GAP) - _BTN_GAP + 12
         panel_x = WINDOW_WIDTH - panel_w - 8
@@ -786,69 +775,65 @@ class Renderer:
     # Overlay diario
     # ---------------------------------------------------------------
 
-    def _draw_diary_overlay(self, diary_entries: list) -> None:
-        """
-        Panel semi-transparente que muestra las últimas entradas del diario.
-        Diseño: fondo oscuro púrpura, entradas en orden cronológico inverso.
-        """
-        OW, OH = 520, _WORLD_H - 40
-        ox = (WINDOW_WIDTH - OW) // 2
+    def _draw_diary_overlay(self, diary_entries: List[dict]) -> None:
+        """Panel semitransparente que muestra las últimas entradas del diario."""
+        ow, oh = 520, _WORLD_H - 40
+        ox = (WINDOW_WIDTH - ow) // 2
         oy = 20
 
-        panel = pygame.Surface((OW, OH), pygame.SRCALPHA)
+        panel = pygame.Surface((ow, oh), pygame.SRCALPHA)
         panel.fill(C_DIARY_BG)
-        pygame.draw.rect(panel, C_DIARY_BORDER, (0, 0, OW, OH), 2, border_radius=10)
+        pygame.draw.rect(panel, C_DIARY_BORDER, (0, 0, ow, oh), 2, border_radius=10)
 
-        # Título
         title = self.font_large.render("✦  Diario de las criaturas  ✦", True, C_DIARY_HEAD)
-        panel.blit(title, (OW//2 - title.get_width()//2, 12))
-
-        # Línea separadora
-        pygame.draw.line(panel, C_DIARY_LINE, (16, 32), (OW-16, 32), 1)
+        panel.blit(title, (ow//2 - title.get_width()//2, 12))
+        pygame.draw.line(panel, C_DIARY_LINE, (16, 32), (ow-16, 32), 1)
 
         if not diary_entries:
-            empty = self.font_small.render(
-                "Aún no hay entradas. Las criaturas necesitan gemas.", True, C_DIARY_META)
-            panel.blit(empty, (OW//2 - empty.get_width()//2, OH//2))
+            self._draw_empty_diary(panel, ow, oh)
         else:
-            y = 42
-            for entry in reversed(diary_entries[-12:]):
-                if y >= OH - 20:
-                    break
+            self._draw_diary_entries(panel, diary_entries, ow, oh)
 
-                # Cabecera: hora + id + gemas
-                meta_str = f"[{entry.get('datetime', '')[-8:]}]  {entry['creature_id']}  💎×{entry['gems_spent']}"
-                meta_s = self.font_small.render(meta_str, True, C_DIARY_META)
-                panel.blit(meta_s, (14, y))
-                y += 15
-
-                # Texto con word-wrap
-                words = entry["text"].split()
-                line, lines = "", []
-                for w in words:
-                    test = (line + " " + w).strip()
-                    if self.font_msg.size(test)[0] > OW - 28 and line:
-                        lines.append(line)
-                        line = w
-                    else:
-                        line = test
-                if line:
-                    lines.append(line)
-
-                for ln in lines:
-                    if y >= OH - 20:
-                        break
-                    ts = self.font_msg.render(ln, True, C_DIARY_TEXT)
-                    panel.blit(ts, (14, y))
-                    y += 14
-
-                y += 6
-                # Línea divisoria entre entradas
-                pygame.draw.line(panel, C_DIARY_LINE, (14, y), (OW-14, y), 1)
-                y += 8
-
-        # Pista de cierre
-        close_hint = self.font_tiny.render("[Tab] cerrar", True, C_DIARY_META)
-        panel.blit(close_hint, (OW//2 - close_hint.get_width()//2, OH - 14))
-
+        hint = self.font_tiny.render("[Tab] cerrar", True, C_DIARY_META)
+        panel.blit(hint, (ow//2 - hint.get_width()//2, oh - 14))
         self.screen.blit(panel, (ox, oy))
+
+    def _draw_empty_diary(self, panel: pygame.Surface, ow: int, oh: int):
+        txt = "Aún no hay entradas. Las criaturas necesitan gemas."
+        empty = self.font_small.render(txt, True, C_DIARY_META)
+        panel.blit(empty, (ow//2 - empty.get_width()//2, oh//2))
+
+    def _draw_diary_entries(self, panel: pygame.Surface, entries: List[dict], ow: int, oh: int):
+        y = 42
+        for entry in reversed(entries[-12:]):
+            if y >= oh - 30: break
+            
+            # Cabecera
+            dt = entry.get('datetime', '')[-8:]
+            meta = f"[{dt}]  {entry['creature_id']}  💎×{entry['gems_spent']}"
+            panel.blit(self.font_small.render(meta, True, C_DIARY_META), (14, y))
+            y += 15
+
+            # Texto envuelto
+            y = self._draw_wrapped_text(panel, entry['text'], 14, y, ow - 28, oh)
+            
+            y += 6
+            pygame.draw.line(panel, C_DIARY_LINE, (14, y), (ow-14, y), 1)
+            y += 8
+
+    def _draw_wrapped_text(self, panel: pygame.Surface, text: str, x: int, y: int, max_w: int, oh: int) -> int:
+        words = text.split()
+        line = ""
+        for w in words:
+            if y >= oh - 20: break
+            test = (line + " " + w).strip()
+            if self.font_msg.size(test)[0] > max_w and line:
+                panel.blit(self.font_msg.render(line, True, C_DIARY_TEXT), (x, y))
+                y += 14
+                line = w
+            else:
+                line = test
+        if line and y < oh - 20:
+            panel.blit(self.font_msg.render(line, True, C_DIARY_TEXT), (x, y))
+            y += 14
+        return y

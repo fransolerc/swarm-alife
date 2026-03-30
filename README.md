@@ -25,14 +25,27 @@ Creatures are born one at a time and reproduce asexually when healthy enough —
 
 ```
 swarm-alife/
-├── main.py                        # Entry point, Pygame loop
+├── main.py                        # Entry point (~30 lines)
 ├── config.py                      # All constants centralised
 ├── locales.py                     # Localised strings (EN/ES)
 ├── utils.py                       # Shared utilities (Thread-safe file I/O)
 ├── requirements.txt
-├── agent/
-│   ├── creature.py                # Creature orchestrator + A* navigation
-│   ├── needs.py                   # Needs system (Hunger, Hygiene, Happiness)
+├── core/                          # Core game systems
+│   ├── game.py                    # Main game loop controller
+│   ├── persistence.py             # Save/load state & ID generation
+│   └── input_handler.py           # Keyboard & mouse input handling
+├── agent/                         # Agent logic
+│   ├── creature.py                # Creature orchestrator
+│   ├── navigation.py              # A* pathfinding & grid movement
+│   ├── inventory.py               # Resource carrying system
+│   ├── needs/                     # Needs package
+│   │   ├── needs.py              # Needs container (hunger/hygiene/happiness)
+│   │   ├── core.py               # Single need with thresholds
+│   │   └── modifiers.py          # Social need modifiers
+│   ├── behavior/                  # Behavior modules
+│   │   ├── base.py               # Base behavior class
+│   │   ├── seek_food.py          # Food seeking strategy
+│   │   └── carry_resource.py     # Resource transport behavior
 │   ├── social.py                  # Emergent social behaviour
 │   ├── communication.py           # Event-driven LLM messages
 │   ├── writing.py                 # Diary writing system (Asynchronous)
@@ -40,11 +53,11 @@ swarm-alife/
 │       ├── concept_node.py        # SPO memory unit
 │       ├── associative_memory.py  # Relevance-based retrieval
 │       └── sim_clock.py           # Simulated clock
-├── world/
+├── world/                         # World simulation
 │   ├── objects.py                 # World objects, Apple/Wood/Gem systems
 │   ├── placement.py               # Drag & drop placement state
 │   └── progression.py             # Level progression singleton
-├── render/
+├── render/                        # Rendering layer
 │   └── renderer.py                # Pygame renderer (drawing only)
 └── data/                          # Persistent memory, world state and diary
 ```
