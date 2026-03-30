@@ -6,7 +6,7 @@ Technical continuation of [digimon-alife](https://github.com/fransolerc/digimon-
 
 ## Concept
 
-Creatures live together in a shared 2D space. Each one maintains an internal state of needs (hunger, hygiene, happiness, energy) that evolves over time. Emergent behaviour arises from simple proximity rules and mutual influence. The LLM only speaks when a creature crosses a critical need threshold.
+Creatures live together in a shared 2D space. Each one maintains an internal state of needs (hunger, hygiene, happiness) that evolves over time. Emergent behaviour arises from simple proximity rules and mutual influence. The LLM only speaks when a creature crosses a critical need threshold or writes in its diary.
 
 Creatures are born one at a time and reproduce asexually when healthy enough — offspring inherit their parent's needs with slight variance. The colony grows indefinitely.
 
@@ -16,8 +16,9 @@ Creatures are born one at a time and reproduce asexually when healthy enough —
 |---|---|
 | Rendering + input | Pygame |
 | Agent logic | Pure Python |
-| Pathfinding | A* over grid cells |
+| Pathfinding | A* over grid cells (diagonal support for targets) |
 | User communication | Ollama + Llama 3.2 3B (event-driven) |
+| Persistent Storage | Atomic JSON writes with thread-safety (Windows optimized) |
 | No HTTP, no Flask, no external engine | Everything in a single process |
 
 ## Project structure
@@ -27,24 +28,25 @@ swarm-alife/
 ├── main.py                        # Entry point, Pygame loop
 ├── config.py                      # All constants centralised
 ├── locales.py                     # Localised strings (EN/ES)
-├── utils.py                       # Shared utilities
+├── utils.py                       # Shared utilities (Thread-safe file I/O)
 ├── requirements.txt
 ├── agent/
 │   ├── creature.py                # Creature orchestrator + A* navigation
-│   ├── needs.py                   # Needs system
+│   ├── needs.py                   # Needs system (Hunger, Hygiene, Happiness)
 │   ├── social.py                  # Emergent social behaviour
-│   ├── communication.py           # Event-driven LLM (separate thread)
+│   ├── communication.py           # Event-driven LLM messages
+│   ├── writing.py                 # Diary writing system (Asynchronous)
 │   └── memory/
 │       ├── concept_node.py        # SPO memory unit
 │       ├── associative_memory.py  # Relevance-based retrieval
 │       └── sim_clock.py           # Simulated clock
 ├── world/
-│   ├── objects.py                 # World objects, apple system, WorldMap
+│   ├── objects.py                 # World objects, Apple/Wood/Gem systems
 │   ├── placement.py               # Drag & drop placement state
-│   └── progression.py             # Level progression singleton (GameProgress)
+│   └── progression.py             # Level progression singleton
 ├── render/
 │   └── renderer.py                # Pygame renderer (drawing only)
-└── data/                          # Per-creature persistent memory (not tracked)
+└── data/                          # Persistent memory, world state and diary
 ```
 
 ## Installation
@@ -65,10 +67,10 @@ python main.py
 | Right click on object | Remove object |
 | Axe tool (palette) | Toggle axe mode |
 | Left click on tree (axe mode) | Chop tree |
+| Tab | Open/Close Diary |
 | F | Feed (selected or all) |
 | D | Shower (selected or all) |
 | J | Play (selected or all) |
-| S | Sleep (selected only) |
 | G | Save state |
 | ESC | Quit |
 
@@ -76,50 +78,46 @@ python main.py
 
 | Object | Size | Effect |
 |---|---|---|
-| Tree | 1×1 | Blocks movement. ~60% chance to grow apples. Shake to drop them. Choppable with axe. |
+| Tree | 1×1 | Blocks movement. ~60% chance to grow apples. Choppable with axe (yields wood). |
 | Bath | 1×1 | Restores hygiene. Creatures seek it autonomously when dirty. |
 | Ball | 1×1 | Boosts happiness. Creatures seek it autonomously when unhappy. |
-| Bed | 1×1 | Restores energy. Creatures seek it autonomously when tired. |
-| Store | 2×2 | Receives apples and wood carried by comfortable creatures. |
+| Mine | 1×1 | Placed over deposits. Creatures extract gems for diary writing. |
+| Store | 2×2 | Receives apples, wood and gems carried by creatures. |
 
-Apples fall to the ground when a tree is shaken, rot after 30 seconds, and are picked up automatically by hungry creatures nearby. Chopped trees leave a stump that disappears after a few seconds, yielding wood.
+Apples fall to the ground when a tree is shaken, rot after 90 seconds, and are picked up by creatures. Chopped trees leave a stump that yields wood. Gems are infinite but have a per-creature extraction cooldown.
 
 ## Creature behaviour
 
-Creatures navigate via A* pathfinding over a 40px grid. They wander autonomously and seek world objects when a need crosses its seeking threshold. When they reach an object they use it for a fixed duration before moving on. If the path becomes blocked mid-route, it is recomputed automatically.
+Creatures navigate via A* pathfinding. They wander autonomously and seek world objects when a need crosses its seeking threshold. They can interact with objects from adjacent cells (including diagonals) to avoid getting stuck.
 
-Behaviour is influenced by proximity to neighbours — nearby hungry creatures spread anxiety; being close to others boosts happiness. Visual states reflect internal needs: normal (green), hungry (yellow), sad (blue), tired (grey), critical (red with pulsing ring).
+### Autonomous carrying & Resources
 
-### Autonomous carrying
+When comfortable (`CARRY_NEED_THRESHOLD`), creatures will autonomously:
+1. Pick up ground apples or harvest them from trees.
+2. Extract gems from mines.
+3. Pick up wood from stumps.
+Everything is delivered to the nearest **Store**.
 
-When all of a creature's needs are above a comfort threshold (`CARRY_NEED_THRESHOLD`), it will autonomously pick up ground apples or loose wood and carry them to the nearest store. A small icon above the creature shows what it is carrying. Carrying is cancelled immediately if any need drops below the threshold.
+### Diary Writing
 
-## Progression
-
-The game starts at level 1. When the colony reaches 3 creatures, level 2 unlocks: trees begin growing apples over time and creatures will shake them autonomously when hungry. A notification is displayed briefly when the level changes.
+Creatures can spend **3 gems** from a store to write a diary entry. This process uses the LLM asynchronously to reflect on their recent memories (eating, depositing, interactions). The diary is saved in `data/diary.json` and `data/diary.md`.
 
 ## Reproduction
 
-A creature can divide when it has lived long enough and all its needs are above a health threshold. The offspring spawns nearby, inherits the parent's needs with slight variance, and belongs to the next generation. There is no population cap.
+A creature can divide when it has lived long enough and its hunger, hygiene, and happiness are above a health threshold. Offspring inherit needs with slight variance.
 
 ## LLM communication
 
-The LLM is never polled continuously. It is invoked only when a creature crosses a critical need threshold and a per-creature cooldown has elapsed. Responses are generated in a background thread so the simulation never blocks. On failure, a localised fallback message is used — errors are always logged explicitly.
+The LLM is invoked:
+1. When a creature crosses a critical need threshold (bubble message).
+2. When a creature decides to write in its diary (spending gems).
+Both processes run in background threads to ensure smooth gameplay.
 
 ## Design principles
 
-1. **LLM provides expression, Python owns all logic** — no exceptions
-2. All thresholds and constants centralised in `config.py`
-3. Localised strings in `locales.py`
-4. Per-creature persistent memory in `data/` via atomic writes
-5. Explicit LLM error logging — never silent
-6. Renderer writes geometry onto shared placement object — single source of truth for hit-testing
+1. **LLM provides expression, Python owns all logic**.
+2. **Thread-safe persistence**: Atomic writes with locks to prevent Windows permission errors.
+3. **Diagonal interaction**: Creatures can use objects from any surrounding cell.
+4. **Centralised config**: All balance constants in `config.py`.
 
-## Research goals
-
-- Emergent collective behaviour from simple interaction rules
-- State contagion between agents via proximity
-- LLM as an occasional communication channel, not a simulation engine
-- Cleaner and more controllable base than digimon-alife for experimenting with agent architectures
-
-Inspired by [Generative Agents (Park et al., 2023)](https://arxiv.org/abs/2304.03442) and the Thronglets from Black Mirror.
+Inspired by [Generative Agents (Park et al., 2023)](https://arxiv.org/abs/2304.03442).
