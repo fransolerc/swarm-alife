@@ -180,7 +180,7 @@ class Creature:
     # Update
     # ------------------------------------------------------------------
 
-    def update(self, delta: float, is_night: bool = False, world=None) -> Optional[str]:
+    def update(self, delta: float, world=None) -> Optional[str]:
         self.age += delta
         if self._reproduction_cooldown > 0:
             self._reproduction_cooldown -= delta
@@ -194,7 +194,7 @@ class Creature:
                 self._check_writing(world)
 
         self._update_movement(delta, world=world)
-        triggered = self.needs.update(delta, is_night)
+        triggered = self.needs.update(delta)
         self._update_message_timer(delta)
 
         if self.ready_to_reproduce():
@@ -343,7 +343,6 @@ class Creature:
             n.hunger    <= (NEED_MAX - CARRY_NEED_THRESHOLD)
             and n.hygiene   >= CARRY_NEED_THRESHOLD
             and n.happiness >= CARRY_NEED_THRESHOLD
-            and n.energy    >= CARRY_NEED_THRESHOLD
         )
 
     def _update_carrying(self, world) -> bool:
@@ -491,8 +490,6 @@ class Creature:
 
     def _update_movement(self, delta: float, world=None) -> None:
         speed = CREATURE_SPEED
-        if self.needs.energy <= 20.0:   speed *= 0.4
-        elif self.needs.energy <= 40.0: speed *= 0.7
 
         progress_rate = speed / GRID_CELL
 
@@ -577,7 +574,7 @@ class Creature:
         now = time.time()
         if now - self._last_llm_time < LLM_MESSAGE_COOLDOWN:
             return None
-        for need in ["hunger", "energy", "hygiene", "happiness"]:
+        for need in ["hunger", "hygiene", "happiness"]:
             if need in triggered:
                 self._last_llm_time = now
                 self._pending_need  = need
@@ -617,7 +614,6 @@ class Creature:
         self.memory.add_raw("usuario", "jugo_conmigo", "juego", poignancy=7.0)
 
     def sleep(self) -> None:
-        self.needs.sleep()
         self.memory.add_raw("yo", "dormi", "descanso", poignancy=3.0)
 
     # ------------------------------------------------------------------
@@ -632,7 +628,6 @@ class Creature:
             n.hunger    <= (100.0 - REPRODUCTION_NEED_THRESHOLD)
             and n.hygiene   >= REPRODUCTION_NEED_THRESHOLD
             and n.happiness >= REPRODUCTION_NEED_THRESHOLD
-            and n.energy    >= REPRODUCTION_NEED_THRESHOLD
         )
 
     def spawn_offspring(self, offspring_id: str) -> "Creature":
@@ -649,7 +644,7 @@ class Creature:
         offspring = Creature(offspring_id, x=ox, y=oy)
         offspring.generation = self.generation + 1
 
-        for attr in ["hunger", "hygiene", "happiness", "energy"]:
+        for attr in ["hunger", "hygiene", "happiness"]:
             base = getattr(self.needs, attr)
             setattr(offspring.needs, attr,
                     clamp(base + random.uniform(-OFFSPRING_NEED_VARIANCE, OFFSPRING_NEED_VARIANCE),

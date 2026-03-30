@@ -116,7 +116,6 @@ def find_creature_at(creatures: list[Creature], mx: int, my: int) -> Creature | 
 def _apply_action_key(
     key: int,
     targets: list[Creature],
-    selected: Creature | None,
     creatures: list[Creature],
     world: WorldMap,
 ) -> None:
@@ -126,8 +125,6 @@ def _apply_action_key(
         for c in targets: c.shower()
     elif key == pygame.K_j:
         for c in targets: c.play()
-    elif key == pygame.K_s:
-        if selected: selected.sleep()
     elif key == pygame.K_g:
         for c in creatures: c.save()
         save_world(world)
@@ -156,7 +153,7 @@ def _handle_keydown(
         return False, new_show, new_entries
 
     targets = [selected] if selected else creatures
-    _apply_action_key(event.key, targets, selected, creatures, world)
+    _apply_action_key(event.key, targets, creatures, world)
     return False, show_diary, diary_entries
 
 
@@ -242,7 +239,7 @@ def _update(
     world.update(delta)
 
     for creature in creatures:
-        signal = creature.update(delta, is_night=sim_clock.is_night(), world=world)
+        signal = creature.update(delta, world=world)
         if signal == "reproduce":
             pending_spawn.append(creature.spawn_offspring(_next_id()))
         elif signal is not None:

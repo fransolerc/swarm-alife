@@ -10,7 +10,7 @@ import logging
 from config import (
     WINDOW_WIDTH, WINDOW_HEIGHT, TOOLBAR_HEIGHT,
     CREATURE_RADIUS, COLOR_HUNGER_BAR, COLOR_HYGIENE_BAR,
-    COLOR_HAPPINESS_BAR, COLOR_ENERGY_BAR,
+    COLOR_HAPPINESS_BAR,
     COLOR_MESSAGE_BG, COLOR_MESSAGE_TEXT,
     NEED_MAX, GRID_CELL,
     PLACEMENT_HOVER_COLOR, PLACEMENT_BLOCKED_COLOR,
@@ -221,7 +221,6 @@ class Renderer:
                 self._draw_tree(cx, cy, obj.apple_count if obj.has_apples else -1)
         elif obj.type == ObjType.BATH:  self._draw_bath(cx, cy)
         elif obj.type == ObjType.BALL:  self._draw_ball(cx, cy)
-        elif obj.type == ObjType.BED:   self._draw_bed(cx, cy)
         elif obj.type == ObjType.STORE: self._draw_store(obj, cx, cy)
         elif obj.type == ObjType.MINE:  self._draw_mine(cx, cy)
 
@@ -413,7 +412,6 @@ class Renderer:
         if n.is_critical():    return "critical"
         if n.hunger    >= 75:  return "hungry"
         if n.happiness <= 30:  return "sad"
-        if n.energy    <= 25:  return "tired"
         return "normal"
 
     def _draw_creature(self, c):
@@ -618,8 +616,7 @@ class Renderer:
         needs = [
             (c.needs.hunger,    COLOR_HUNGER_BAR,    True),
             (c.needs.hygiene,   COLOR_HYGIENE_BAR,   False),
-            (c.needs.happiness, COLOR_HAPPINESS_BAR, False),
-            (c.needs.energy,    COLOR_ENERGY_BAR,    False),
+            (c.needs.happiness, COLOR_HAPPINESS_BAR, False)
         ]
         by = py + 32
         for val, col, inv in needs:
@@ -730,11 +727,6 @@ class Renderer:
             pygame.draw.arc(self.screen,(255,255,255),(cx-14,cy-8,28,16),0,math.pi,2)
             pygame.draw.arc(self.screen,(255,255,255),(cx-14,cy-8,28,16),math.pi,2*math.pi,2)
             _el(self.screen,(255,255,255),cx-5,cy-8,5,3)
-        elif obj_type == ObjType.BED:
-            pygame.draw.rect(self.screen,(139,94,60),(cx-13,cy-2,26,14),border_radius=3)
-            pygame.draw.rect(self.screen,(212,168,112),(cx-11,cy-5,22,10),border_radius=2)
-            pygame.draw.rect(self.screen,(240,232,208),(cx-10,cy-6,9,6),border_radius=2)
-            pygame.draw.rect(self.screen,(232,208,160),(cx-1,cy-4,10,6),border_radius=1)
         elif obj_type == ObjType.STORE:
             pygame.draw.polygon(self.screen, C_STORE_ROOF,
                                 [(cx-14,cy),(cx,cy-11),(cx+14,cy)])

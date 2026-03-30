@@ -14,7 +14,6 @@ PALETTE: list[ObjType] = [
     ObjType.TREE,
     ObjType.BATH,
     ObjType.BALL,
-    ObjType.BED,
     ObjType.STORE,
     ObjType.MINE,
 ]

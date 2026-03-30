@@ -11,7 +11,7 @@ from typing import Optional
 
 from config import (
     GRID_CELL, OBJECT_USE_RANGE, OBJECT_USE_COOLDOWN,
-    BATH_HYGIENE_RESTORE, BALL_HAPPINESS_BONUS, BALL_ENERGY_COST, BED_ENERGY_RESTORE,
+    BATH_HYGIENE_RESTORE, BALL_HAPPINESS_BONUS,
     WINDOW_WIDTH, WINDOW_HEIGHT, UI_PANEL_WIDTH,
     STUMP_DURATION, WOOD_PER_TREE, STORE_SIZE,
     APPLE_MAX_PER_TREE, APPLE_REGROW_TIME, APPLE_ROT_TIME, APPLE_PICK_RANGE,
@@ -31,7 +31,6 @@ class ObjType(Enum):
     TREE  = auto()
     BATH  = auto()
     BALL  = auto()
-    BED   = auto()
     STORE = auto()
     MINE  = auto()
 
@@ -40,7 +39,6 @@ OBJ_NEED: dict[ObjType, Optional[str]] = {
     ObjType.TREE:  None,
     ObjType.BATH:  "hygiene",
     ObjType.BALL:  "happiness",
-    ObjType.BED:   "energy",
     ObjType.STORE: None,
     ObjType.MINE:  None,
 }
@@ -49,7 +47,6 @@ OBJ_LABEL: dict[ObjType, str] = {
     ObjType.TREE:  "árbol",
     ObjType.BATH:  "bañera",
     ObjType.BALL:  "pelota",
-    ObjType.BED:   "cama",
     ObjType.STORE: "almacén",
     ObjType.MINE:  "mina",
 }
@@ -58,7 +55,6 @@ OBJ_SIZE: dict[ObjType, int] = {
     ObjType.TREE:  1,
     ObjType.BATH:  1,
     ObjType.BALL:  1,
-    ObjType.BED:   1,
     ObjType.STORE: STORE_SIZE,   # 2×2
     ObjType.MINE:  1,
 }
@@ -148,7 +144,7 @@ class WorldObject:
         return OBJ_NEED[self.type]
 
     def in_range(self, cx: float, cy: float) -> bool:
-        """Rango de uso general (bañera, pelota, cama, almacén)."""
+        """Rango de uso general (bañera, pelota, almacén)."""
         half      = (self.size * GRID_CELL) / 2
         effective = OBJECT_USE_RANGE + half - GRID_CELL / 2
         return distance((cx, cy), self.pos) <= effective
@@ -175,9 +171,7 @@ class WorldObject:
         if self.type == ObjType.BATH:
             needs.shower_amount(BATH_HYGIENE_RESTORE)
         elif self.type == ObjType.BALL:
-            needs.play_amount(BALL_HAPPINESS_BONUS, BALL_ENERGY_COST)
-        elif self.type == ObjType.BED:
-            needs.sleep_amount(BED_ENERGY_RESTORE)
+            needs.play_amount(BALL_HAPPINESS_BONUS)
         self._cooldowns[creature_id] = OBJECT_USE_COOLDOWN
         self._occupant = creature_id
         return True

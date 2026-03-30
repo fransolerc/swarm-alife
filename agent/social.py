@@ -7,7 +7,7 @@
 import logging
 from typing import TYPE_CHECKING
 
-from config import HUNGER_CRITICAL, ENERGY_CRITICAL
+from config import HUNGER_CRITICAL
 
 if TYPE_CHECKING:
     from agent.creature import Creature
@@ -47,8 +47,6 @@ def _proximity_effects(creatures: list["Creature"], delta: float) -> None:
                 neighbors.append(other)
                 if other.needs.hunger >= HUNGER_CRITICAL:
                     hungry_neighbors += 1
-                if other.needs.energy <= ENERGY_CRITICAL:
-                    tired_neighbors += 1
 
         # 1. Confort: al menos un vecino cerca → bonus de felicidad
         if neighbors:
