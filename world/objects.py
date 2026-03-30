@@ -16,6 +16,7 @@ from config import (
     STUMP_DURATION, WOOD_PER_TREE, STORE_SIZE,
     APPLE_MAX_PER_TREE, APPLE_REGROW_TIME, APPLE_ROT_TIME, APPLE_PICK_RANGE,
     APPLE_HUNGER_VALUE, SHAKE_COOLDOWN, APPLE_TREE_CHANCE, APPLE_SHAKE_RANGE,
+    MINE_EXTRACT_COOLDOWN, GEM_DEPOSIT_COUNT,
 )
 from utils import distance, clamp
 
@@ -32,6 +33,7 @@ class ObjType(Enum):
     BALL  = auto()
     BED   = auto()
     STORE = auto()
+    MINE  = auto()
 
 
 OBJ_NEED: dict[ObjType, Optional[str]] = {
@@ -40,6 +42,7 @@ OBJ_NEED: dict[ObjType, Optional[str]] = {
     ObjType.BALL:  "happiness",
     ObjType.BED:   "energy",
     ObjType.STORE: None,
+    ObjType.MINE:  None,
 }
 
 OBJ_LABEL: dict[ObjType, str] = {
@@ -48,6 +51,7 @@ OBJ_LABEL: dict[ObjType, str] = {
     ObjType.BALL:  "pelota",
     ObjType.BED:   "cama",
     ObjType.STORE: "almacén",
+    ObjType.MINE:  "mina",
 }
 
 OBJ_SIZE: dict[ObjType, int] = {
@@ -56,6 +60,7 @@ OBJ_SIZE: dict[ObjType, int] = {
     ObjType.BALL:  1,
     ObjType.BED:   1,
     ObjType.STORE: STORE_SIZE,   # 2×2
+    ObjType.MINE:  1,
 }
 
 
@@ -106,6 +111,7 @@ class WorldObject:
 
     stored_apples: int = field(default=0, repr=False)
     stored_wood:   int = field(default=0, repr=False)
+    stored_gems:   int = field(default=0, repr=False)
 
     def __post_init__(self):
         if self.size == 1 and self.type in OBJ_SIZE:
@@ -135,7 +141,7 @@ class WorldObject:
 
     @property
     def blocks_path(self) -> bool:
-        return self.type in (ObjType.TREE, ObjType.STORE)
+        return self.type in (ObjType.TREE, ObjType.STORE, ObjType.MINE)
 
     @property
     def need(self) -> Optional[str]:
@@ -154,10 +160,6 @@ class WorldObject:
     # --- Mutex de uso ---
 
     def can_use(self, creature_id: str) -> bool:
-        """
-        Devuelve True si la criatura puede usar el objeto.
-        Requiere cooldown expirado Y que no haya otra criatura ocupando el objeto.
-        """
         if self._cooldowns.get(creature_id, 0) > 0:
             return False
         if self._occupant is not None and self._occupant != creature_id:
@@ -168,7 +170,7 @@ class WorldObject:
         """Aplica el efecto del objeto y marca la criatura como ocupante."""
         if not self.can_use(creature_id):
             return False
-        if self.type in (ObjType.TREE, ObjType.STORE):
+        if self.type in (ObjType.TREE, ObjType.STORE, ObjType.MINE):
             return False
         if self.type == ObjType.BATH:
             needs.shower_amount(BATH_HYGIENE_RESTORE)
@@ -196,11 +198,29 @@ class WorldObject:
         self.stored_wood += count
         logger.debug(f"Store ({self.col},{self.row}): +{count} wood → {self.stored_wood}")
 
+    def deposit_gem(self, count: int = 1) -> None:
+        self.stored_gems += count
+        logger.debug(f"Store ({self.col},{self.row}): +{count} gem(s) → {self.stored_gems}")
+
     def take_apple(self) -> bool:
         if self.type == ObjType.STORE and self.stored_apples > 0:
             self.stored_apples -= 1
             return True
         return False
+
+    # --- Mina: extraer gema ---
+
+    def extract_gem(self, creature_id: str) -> bool:
+        """
+        Extrae una gema de la mina (infinitas). Respeta cooldown por criatura.
+        """
+        if self.type != ObjType.MINE:
+            return False
+        if self._cooldowns.get(creature_id, 0) > 0:
+            return False
+        self._cooldowns[creature_id] = MINE_EXTRACT_COOLDOWN
+        logger.info(f"Mine ({self.col},{self.row}): gem extracted by {creature_id}")
+        return True
 
     # --- Árbol: zarandear ---
 
@@ -280,6 +300,7 @@ class WorldObject:
         if self.type == ObjType.STORE:
             d["stored_apples"] = self.stored_apples
             d["stored_wood"]   = self.stored_wood
+            d["stored_gems"]   = self.stored_gems
         return d
 
     @classmethod
@@ -302,6 +323,7 @@ class WorldObject:
         if obj.type == ObjType.STORE:
             obj.stored_apples = d.get("stored_apples", 0)
             obj.stored_wood   = d.get("stored_wood", 0)
+            obj.stored_gems   = d.get("stored_gems", 0)
         return obj
 
 
@@ -311,9 +333,36 @@ class WorldObject:
 
 class WorldMap:
     def __init__(self):
-        self._objects:      list[WorldObject] = []
-        self._ground_items: list[GroundItem]  = []
+        self._objects:      list[WorldObject]      = []
+        self._ground_items: list[GroundItem]       = []
+        self._deposits:     list[tuple[int, int]]  = []   # coordenadas de yacimientos de gemas
         self.wood: int = 0
+
+    # --- Yacimientos ---
+
+    def generate_deposits(self, count: int = GEM_DEPOSIT_COUNT) -> None:
+        """
+        Genera yacimientos de gemas en posiciones aleatorias del mapa.
+        Evita bordes, celdas ocupadas por objetos y otras deposits.
+        """
+        self._deposits = []
+        attempts = 0
+        while len(self._deposits) < count and attempts < 300:
+            attempts += 1
+            col = random.randint(3, _COLS - 4)
+            row = random.randint(3, _ROWS - 6)   # margen inferior para toolbar
+            if (col, row) in self._deposits:
+                continue
+            if self.get_at_any_cell(col, row) is not None:
+                continue
+            self._deposits.append((col, row))
+        logger.info(f"Generated {len(self._deposits)} gem deposits")
+
+    def has_deposit(self, col: int, row: int) -> bool:
+        return (col, row) in self._deposits
+
+    def deposits(self) -> list[tuple[int, int]]:
+        return self._deposits.copy()
 
     # --- Consulta de celdas ---
 
@@ -348,12 +397,31 @@ class WorldMap:
 
     def place(self, obj_type: ObjType, col: int, row: int) -> bool:
         size = OBJ_SIZE.get(obj_type, 1)
+
+        # La mina requiere un yacimiento en esa celda exacta
+        if obj_type == ObjType.MINE:
+            if not self.has_deposit(col, row):
+                logger.debug(f"Cannot place MINE at ({col},{row}): no deposit")
+                return False
+            if self.get_at_any_cell(col, row) is not None:
+                return False
+            obj = WorldObject(type=ObjType.MINE, col=col, row=row, size=1)
+            self._objects.append(obj)
+            logger.info(f"Mine placed at ({col},{row}) over deposit")
+            return True
+
+        # Resto de objetos: verificar límites, colisiones y yacimientos
         for dc in range(size):
             for dr in range(size):
-                if not self._in_bounds(col+dc, row+dr):
+                nc, nr = col + dc, row + dr
+                if not self._in_bounds(nc, nr):
                     return False
-                if self.get_at_any_cell(col+dc, row+dr) is not None:
+                if self.get_at_any_cell(nc, nr) is not None:
                     return False
+                # Los yacimientos bloquean la colocación de otros objetos
+                if self.has_deposit(nc, nr):
+                    return False
+
         obj = WorldObject(type=obj_type, col=col, row=row, size=size)
         if obj_type == ObjType.TREE:
             obj.has_apples  = random.random() < APPLE_TREE_CHANCE
@@ -364,6 +432,7 @@ class WorldMap:
         return True
 
     def remove(self, col: int, row: int) -> bool:
+        """Elimina el objeto en esa celda (los yacimientos no son eliminables)."""
         obj = self.get_at_any_cell(col, row)
         if obj is not None:
             self._objects.remove(obj)
@@ -410,18 +479,24 @@ class WorldMap:
         return obj.consume_apple()
 
     def nearest_shakeable_tree(self, cx: float, cy: float) -> Optional[WorldObject]:
-        """Árbol más cercano con manzanas disponibles y sin cooldown de sacudida."""
         candidates = [o for o in self._objects if o.type == ObjType.TREE and o.can_shake()]
         if not candidates:
             return None
         return min(candidates, key=lambda o: distance((cx, cy), o.pos))
 
     def nearest_stump(self, cx: float, cy: float) -> Optional[WorldObject]:
-        """Tocón más cercano (árbol talado que aún no ha desaparecido)."""
         stumps = [o for o in self._objects if o.type == ObjType.TREE and o.chopped]
         if not stumps:
             return None
         return min(stumps, key=lambda o: distance((cx, cy), o.pos))
+
+    # --- Minas ---
+
+    def nearest_mine(self, cx: float, cy: float) -> Optional[WorldObject]:
+        mines = [o for o in self._objects if o.type == ObjType.MINE]
+        if not mines:
+            return None
+        return min(mines, key=lambda o: distance((cx, cy), o.pos))
 
     # --- Manzanas en el suelo ---
 
@@ -432,7 +507,6 @@ class WorldMap:
         return min(available, key=lambda i: distance((cx, cy), (i.x, i.y)))
 
     def pick_apple(self, item: GroundItem, needs) -> bool:
-        """Recoge manzana para comer."""
         if item not in self._ground_items:
             return False
         needs.feed_amount(APPLE_HUNGER_VALUE)
@@ -440,7 +514,6 @@ class WorldMap:
         return True
 
     def pick_apple_to_carry(self, item: GroundItem) -> bool:
-        """Recoge manzana para acarrear al almacén (sin beneficio de hambre)."""
         if item not in self._ground_items:
             return False
         self._ground_items.remove(item)
@@ -484,8 +557,33 @@ class WorldMap:
             item.update(delta)
         self._ground_items = [i for i in self._ground_items if not i.rotten]
 
-    # --- Persistencia ---
+    # --- Persistencia (formato dict para soportar depósitos) ---
 
+    def to_dict(self) -> dict:
+        return {
+            "objects":  [o.to_dict() for o in self._objects],
+            "deposits": [{"col": c, "row": r} for c, r in self._deposits],
+            "wood":     self.wood,
+        }
+
+    def from_dict(self, data) -> None:
+        """Carga desde dict (nuevo formato) o list (formato antiguo, retrocompat)."""
+        if isinstance(data, list):
+            # Formato antiguo: solo lista de objetos
+            self._objects = [WorldObject.from_dict(d) for d in data]
+            self.wood     = 0
+            self.generate_deposits(GEM_DEPOSIT_COUNT)
+            return
+
+        self._objects = [WorldObject.from_dict(d) for d in data.get("objects", [])]
+        self.wood     = data.get("wood", 0)
+        deps = data.get("deposits", [])
+        if deps:
+            self._deposits = [(d["col"], d["row"]) for d in deps]
+        else:
+            self.generate_deposits(GEM_DEPOSIT_COUNT)
+
+    # Alias para retrocompatibilidad
     def to_list(self) -> list[dict]:
         return [o.to_dict() for o in self._objects]
 

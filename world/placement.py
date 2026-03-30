@@ -16,6 +16,7 @@ PALETTE: list[ObjType] = [
     ObjType.BALL,
     ObjType.BED,
     ObjType.STORE,
+    ObjType.MINE,
 ]
 
 
@@ -31,11 +32,10 @@ class PlacementMode:
         self._world = world
 
         # Geometría de la paleta — el renderer los escribe cada frame
-        # Los defaults son seguros aunque el renderer no haya corrido aún
-        self.palette_x:     int = WINDOW_WIDTH - 400
+        self.palette_x:       int = WINDOW_WIDTH - 400
         self.palette_y_start: int = WINDOW_HEIGHT - TOOLBAR_HEIGHT + 6
-        self.btn_size:      int = 52
-        self.btn_gap:       int = 5
+        self.btn_size:        int = 52
+        self.btn_gap:         int = 5
 
         # Estado drag (objetos)
         self.dragging:  bool              = False
@@ -55,7 +55,7 @@ class PlacementMode:
     # Geometría — calculada a partir de los valores que escribe el renderer
     # ---------------------------------------------------------------
 
-    def _chip_rects(self) -> list[tuple[int,int,int,int]]:
+    def _chip_rects(self) -> list[tuple[int, int, int, int]]:
         """
         Devuelve [(x, y, w, h), ...] para cada chip de la paleta.
         Orden: objetos de PALETTE seguidos del chip de hacha.
@@ -80,7 +80,7 @@ class PlacementMode:
 
         # Chips de objetos
         for i, (rx, ry, rw, rh) in enumerate(rects[:len(PALETTE)]):
-            if rx <= mx <= rx+rw and ry <= my <= ry+rh:
+            if rx <= mx <= rx + rw and ry <= my <= ry + rh:
                 self.tool      = ToolMode.NONE
                 self.dragging  = True
                 self.drag_type = PALETTE[i]
@@ -91,7 +91,7 @@ class PlacementMode:
 
         # Chip de hacha
         rx, ry, rw, rh = rects[len(PALETTE)]
-        if rx <= mx <= rx+rw and ry <= my <= ry+rh:
+        if rx <= mx <= rx + rw and ry <= my <= ry + rh:
             self.tool = ToolMode.NONE if self.tool == ToolMode.AXE else ToolMode.AXE
             return True
 
@@ -134,14 +134,30 @@ class PlacementMode:
         return OBJ_SIZE.get(self.drag_type, 1)
 
     def hover_blocked(self) -> bool:
+        """
+        Devuelve True si la posición actual de hover no permite colocar el objeto.
+
+        La mina tiene reglas especiales: válida solo sobre un yacimiento sin mina.
+        Los demás objetos no pueden colocarse sobre yacimientos.
+        """
+        if self.drag_type == ObjType.MINE:
+            # Válido solo si hay yacimiento y la celda está libre
+            if not self._world.has_deposit(self.hover_col, self.hover_row):
+                return True
+            return self._world.get_at_any_cell(self.hover_col, self.hover_row) is not None
+
+        # Objetos normales: bloqueados por otros objetos o por yacimientos
         size = self.drag_size()
         for dc in range(size):
             for dr in range(size):
-                if self._world.get_at_any_cell(self.hover_col+dc, self.hover_row+dr) is not None:
+                nc, nr = self.hover_col + dc, self.hover_row + dr
+                if self._world.get_at_any_cell(nc, nr) is not None:
+                    return True
+                if self._world.has_deposit(nc, nr):
                     return True
         return False
 
-    def hover_snap_px(self) -> tuple[int,int]:
+    def hover_snap_px(self) -> tuple[int, int]:
         return (
             self.hover_col * GRID_CELL + GRID_CELL // 2,
             self.hover_row * GRID_CELL + GRID_CELL // 2,
@@ -161,8 +177,8 @@ class PlacementMode:
         size = self.drag_size()
         if size > 1:
             half = size // 2
-            col = max(0, col - half + 1)
-            row = max(0, row - half + 1)
+            col  = max(0, col - half + 1)
+            row  = max(0, row - half + 1)
         self.hover_col = col
         self.hover_row = row
 

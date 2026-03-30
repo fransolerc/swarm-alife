@@ -41,19 +41,35 @@ C_PULSE    = (232, 112,  96)
 _INFO_W = 220
 _INFO_X = 8
 
-# Paleta: botones iguales para todos (5 objetos + hacha = 6 chips)
-_BTN_SIZE = 52   # px cuadrado por botón
-_BTN_GAP  = 5    # espacio entre botones
+_BTN_SIZE = 52
+_BTN_GAP  = 5
 
 _POP_CX = 42
 _POP_CY = 42
 
-# Colores del almacén
+# Almacén
 C_STORE_WALL  = (180, 140, 80)
 C_STORE_ROOF  = (140,  60, 40)
 C_STORE_DOOR  = ( 90,  55, 25)
 C_STORE_PLANK = (160, 120, 65)
 C_STORE_STONE = (130, 115, 95)
+
+# Yacimiento / mina
+C_GEM_DARK   = (120,  50, 200)
+C_GEM_MID    = (165,  80, 240)
+C_GEM_LIGHT  = (210, 150, 255)
+C_MINE_WOOD  = (107,  66,  38)
+C_MINE_DARK  = ( 80,  48,  20)
+C_MINE_ROOF  = ( 90,  55,  28)
+
+# Overlay diario
+C_DIARY_BG     = (18,  12,  32, 220)
+C_DIARY_BORDER = (160, 120, 220, 200)
+C_DIARY_HEAD   = (220, 190, 255)
+C_DIARY_META   = (170, 140, 210)
+C_DIARY_TEXT   = (230, 220, 248)
+C_DIARY_GEM    = (190, 130, 255)
+C_DIARY_LINE   = (80,  55, 120, 160)
 
 
 def _el(surf, color, cx, cy, rx, ry, w=0):
@@ -106,17 +122,24 @@ class Renderer:
     # Frame principal
     # ---------------------------------------------------------------
 
-    def draw_frame(self, creatures, selected, clock_obj, world, placement, delta=0.016):
+    def draw_frame(
+        self, creatures, selected, clock_obj, world, placement,
+        delta=0.016, show_diary=False, diary_entries=None,
+    ):
         self._pulse_t += delta
 
         self.screen.blit(self._grass, (0, 0))
         if placement.dragging and placement.hover_valid:
             self._draw_cell_hover(placement)
+        self._draw_deposits(world)
         self._draw_objects(world)
         self._draw_ground_items(world)
         self._draw_creatures(creatures)
         self._draw_toolbar(selected, clock_obj, placement, world.wood)
         self._draw_population_badge(len(creatures))
+
+        if show_diary:
+            self._draw_diary_overlay(diary_entries or [])
 
         pygame.display.flip()
 
@@ -140,6 +163,45 @@ class Renderer:
                 self.screen.blit(cell, (hx, hy))
 
     # ---------------------------------------------------------------
+    # Yacimientos de gemas (no son WorldObjects, se dibujan aparte)
+    # ---------------------------------------------------------------
+
+    def _draw_deposits(self, world):
+        for col, row in world.deposits():
+            cx = col * GRID_CELL + GRID_CELL // 2
+            cy = row * GRID_CELL + GRID_CELL // 2
+            self._draw_gem_deposit(cx, cy)
+
+    def _draw_gem_deposit(self, cx, cy):
+        # Sombra
+        s = pygame.Surface((34, 10), pygame.SRCALPHA)
+        pygame.draw.ellipse(s, (0, 0, 0, 45), (0, 0, 34, 10))
+        self.screen.blit(s, (cx-17, cy+8))
+
+        # Cristal central (grande)
+        pts = [(cx, cy-16), (cx+8, cy-5), (cx+6, cy+7), (cx-6, cy+7), (cx-8, cy-5)]
+        pygame.draw.polygon(self.screen, C_GEM_DARK, pts)
+        pygame.draw.polygon(self.screen, C_GEM_MID, pts, 1)
+        # Faceta de luz
+        pygame.draw.line(self.screen, C_GEM_LIGHT, (cx, cy-16), (cx+4, cy-4), 1)
+        pygame.draw.line(self.screen, C_GEM_LIGHT, (cx-4, cy-8), (cx, cy-16), 1)
+
+        # Cristal derecho (pequeño)
+        pts2 = [(cx+9, cy-8), (cx+15, cy-1), (cx+12, cy+6), (cx+6, cy-1)]
+        pygame.draw.polygon(self.screen, C_GEM_DARK, pts2)
+        pygame.draw.polygon(self.screen, C_GEM_MID, pts2, 1)
+        pygame.draw.line(self.screen, C_GEM_LIGHT, (cx+9, cy-8), (cx+12, cy-2), 1)
+
+        # Cristal izquierdo (pequeño)
+        pts3 = [(cx-9, cy-7), (cx-14, cy+1), (cx-11, cy+6), (cx-5, cy+1)]
+        pygame.draw.polygon(self.screen, C_GEM_DARK, pts3)
+        pygame.draw.polygon(self.screen, C_GEM_MID, pts3, 1)
+        pygame.draw.line(self.screen, C_GEM_LIGHT, (cx-9, cy-7), (cx-12, cy-1), 1)
+
+        # Destello superior
+        _ci(self.screen, C_GEM_LIGHT, cx, cy-16, 2)
+
+    # ---------------------------------------------------------------
     # Objetos del mundo
     # ---------------------------------------------------------------
 
@@ -161,6 +223,7 @@ class Renderer:
         elif obj.type == ObjType.BALL:  self._draw_ball(cx, cy)
         elif obj.type == ObjType.BED:   self._draw_bed(cx, cy)
         elif obj.type == ObjType.STORE: self._draw_store(obj, cx, cy)
+        elif obj.type == ObjType.MINE:  self._draw_mine(cx, cy)
 
     def _draw_tree(self, cx, cy, apple_count=0):
         s = pygame.Surface((44, 12), pygame.SRCALPHA)
@@ -227,44 +290,86 @@ class Renderer:
         self.screen.blit(self.font_tiny.render("zzz",True,(200,216,240)),(cx+10,cy-18))
 
     def _draw_store(self, obj: WorldObject, cx: int, cy: int):
-        """Almacén 2×2 (80×80 px). cx,cy = centro del área."""
-        half = int(obj.size * GRID_CELL / 2)   # 40 px para 2×2
+        half = int(obj.size * GRID_CELL / 2)
         left = cx - half
         top  = cy - half
-
-        # Base de piedra
         _rnd_rect(self.screen, C_STORE_STONE, left+3, top+half+6, half*2-6, half-10, 4)
-        # Paredes de madera
         _rnd_rect(self.screen, C_STORE_WALL, left+5, top+20, half*2-10, half, 3)
-        # Listones
         for dy in range(0, half-4, 10):
             pygame.draw.rect(self.screen, C_STORE_PLANK,
                              (left+5, top+20+dy, half*2-10, 3), border_radius=1)
-        # Tejado triangular
         roof_pts = [(left, top+24), (cx, top+4), (left+half*2, top+24)]
         pygame.draw.polygon(self.screen, C_STORE_ROOF, roof_pts)
         pygame.draw.polygon(self.screen, (160, 80, 55), roof_pts, 2)
         pygame.draw.line(self.screen, (120,50,30), (left, top+24), (left+half*2, top+24), 3)
-        # Puerta
         dw, dh = 18, 24
         dx = cx - dw//2
         dy = cy + half - dh - 6
         _rnd_rect(self.screen, C_STORE_DOOR, dx, dy, dw, dh, 2)
         _rnd_rect(self.screen, (70,42,18), dx, dy, dw, dh, 2, 1)
         _ci(self.screen, (200,170,80), dx+dw-5, dy+dh//2, 2)
-        # HUD de recursos
-        self._draw_store_hud(obj, left, top, half)
+        self._draw_store_hud(obj, left, top)
 
-    def _draw_store_hud(self, obj: WorldObject, left: int, top: int, half: int):
-        hud_y = top - 14
+    def _draw_store_hud(self, obj: WorldObject, left: int, top: int):
+        """Muestra contadores de manzanas, madera y gemas sobre el almacén."""
+        hud_y = top - 16
+        x = left + 4
+
         # Manzanas
-        _ci(self.screen, (200,50,40), left+half-14, hud_y, 5)
+        _ci(self.screen, (200,50,40), x+5, hud_y, 5)
         apple_s = self.font_small.render(str(obj.stored_apples), True, (255,220,200))
-        self.screen.blit(apple_s, (left+half-6, hud_y-5))
+        self.screen.blit(apple_s, (x+13, hud_y-5))
+        x += 28
+
         # Madera
-        pygame.draw.rect(self.screen, (139,94,60), (left+half+10, hud_y-5, 10, 10), border_radius=2)
+        pygame.draw.rect(self.screen, (139,94,60), (x, hud_y-5, 10, 10), border_radius=2)
         wood_s = self.font_small.render(str(obj.stored_wood), True, (240,210,160))
-        self.screen.blit(wood_s, (left+half+24, hud_y-5))
+        self.screen.blit(wood_s, (x+13, hud_y-5))
+        x += 28
+
+        # Gemas
+        gem_pts = [
+            (x+5, hud_y-7), (x+10, hud_y-2), (x+8, hud_y+4),
+            (x+2, hud_y+4), (x,    hud_y-2),
+        ]
+        pygame.draw.polygon(self.screen, C_GEM_DARK, gem_pts)
+        pygame.draw.polygon(self.screen, C_GEM_LIGHT, gem_pts, 1)
+        gem_s = self.font_small.render(str(obj.stored_gems), True, C_GEM_LIGHT)
+        self.screen.blit(gem_s, (x+13, hud_y-5))
+
+    def _draw_mine(self, cx, cy):
+        """Mina de gemas: estructura de madera sobre un yacimiento."""
+        # Sombra
+        s = pygame.Surface((44, 12), pygame.SRCALPHA)
+        pygame.draw.ellipse(s, (0, 0, 0, 45), (0, 0, 44, 12))
+        self.screen.blit(s, (cx-22, cy+10))
+
+        # Patas
+        for px_ in [-12, 12]:
+            pygame.draw.rect(self.screen, C_MINE_WOOD, (cx+px_-3, cy+4, 6, 14), border_radius=1)
+
+        # Cuerpo
+        _rnd_rect(self.screen, C_MINE_WOOD, cx-16, cy-6, 32, 18, 3)
+        _rnd_rect(self.screen, C_MINE_DARK, cx-16, cy-6, 32, 18, 3, 1)
+
+        # Tejado triangular
+        roof_pts = [(cx-20, cy-4), (cx, cy-18), (cx+20, cy-4)]
+        pygame.draw.polygon(self.screen, C_MINE_ROOF, roof_pts)
+        pygame.draw.polygon(self.screen, C_MINE_DARK, roof_pts, 1)
+
+        # Entrada oscura
+        _rnd_rect(self.screen, (30, 18, 8), cx-7, cy-2, 14, 14, 2)
+
+        # Pico cruzado
+        pygame.draw.line(self.screen, (160, 170, 180), (cx-10, cy+8), (cx+6, cy-4), 2)
+        pts_axe = [(cx+4, cy-8), (cx+14, cy-4), (cx+10, cy+3), (cx, cy+1)]
+        pygame.draw.polygon(self.screen, (180, 190, 200), pts_axe)
+        pygame.draw.polygon(self.screen, (140, 148, 158), pts_axe, 1)
+
+        # Gema brillando en el techo
+        _ci(self.screen, C_GEM_DARK, cx-2, cy-20, 4)
+        _ci(self.screen, C_GEM_MID,  cx-2, cy-20, 3)
+        _ci(self.screen, C_GEM_LIGHT, cx-2, cy-20, 1)
 
     # ---------------------------------------------------------------
     # Manzanas en el suelo
@@ -341,14 +446,12 @@ class Renderer:
             _ci(ps, (*C_PULSE, int(160*pulse)), 40, 40, r+4+int(pulse*6), 2)
             self.screen.blit(ps, (cx-40,cy-40))
 
-        # Línea hacia objeto objetivo (necesidad)
         if c.target_obj is not None and not c.using_obj:
             ts = pygame.Surface((WINDOW_WIDTH, _WORLD_H), pygame.SRCALPHA)
             pygame.draw.line(ts, (200,200,100,35),
                              (cx,cy), (int(c.target_obj.px),int(c.target_obj.py)), 1)
             self.screen.blit(ts, (0,0))
 
-        # Línea hacia árbol a sacudir
         if c.shake_target is not None:
             ts = pygame.Surface((WINDOW_WIDTH, _WORLD_H), pygame.SRCALPHA)
             pygame.draw.line(ts, (200,140,60,40),
@@ -370,7 +473,6 @@ class Renderer:
             _el(self.screen, leg_c, acx+10, acy+r-3, 5, 4)
         self._draw_face(acx, acy, state, cheek_c)
 
-        # Icono de acarreo sobre la criatura
         if c.carrying is not None:
             self._draw_carry_icon(acx, acy - r - 8, c.carrying)
 
@@ -382,6 +484,14 @@ class Renderer:
         elif resource == "wood":
             pygame.draw.rect(self.screen, (139,94,60), (cx-7,cy-4,14,8), border_radius=2)
             pygame.draw.rect(self.screen, (107,66,38), (cx-7,cy-4,14,8), 1, border_radius=2)
+        elif resource == "gem":
+            pts = [
+                (cx,   cy-8), (cx+6, cy-2), (cx+4, cy+5),
+                (cx-4, cy+5), (cx-6, cy-2),
+            ]
+            pygame.draw.polygon(self.screen, C_GEM_DARK, pts)
+            pygame.draw.polygon(self.screen, C_GEM_MID, pts, 1)
+            _ci(self.screen, C_GEM_LIGHT, cx, cy-5, 1)
 
     def _draw_face(self, cx, cy, state, cheek_c):
         ey, elx, erx = cy-4, cx-6, cx+6
@@ -479,8 +589,9 @@ class Renderer:
         ts = self.font_small.render(
             f"{clock_obj.time_str()}  {clock_obj.period()}", True, TOOLBAR_WOOD_LIGHT)
         self.screen.blit(ts, (WINDOW_WIDTH//2 - ts.get_width()//2, _TOOLBAR_Y + 4))
-
-    # --- Panel info ---
+        # Pista de teclas
+        hint = self.font_tiny.render("[Tab] diario", True, TOOLBAR_BTN_DARK)
+        self.screen.blit(hint, (WINDOW_WIDTH//2 - hint.get_width()//2, _TOOLBAR_Y + 18))
 
     def _draw_info_panel(self, selected):
         px, py = _INFO_X, _TOOLBAR_Y + 6
@@ -535,11 +646,7 @@ class Renderer:
     # --- Paleta de herramientas ---
 
     def _palette_geometry(self, palette):
-        """
-        Calcula la geometría de la paleta de forma dinámica según el número de items.
-        Devuelve (panel_x, panel_y, panel_w, panel_h, btn_y, btn_h).
-        """
-        n       = len(palette) + 1              # objetos + hacha
+        n       = len(palette) + 1
         panel_w = n * (_BTN_SIZE + _BTN_GAP) - _BTN_GAP + 12
         panel_x = WINDOW_WIDTH - panel_w - 8
         panel_y = _TOOLBAR_Y + 6
@@ -556,11 +663,10 @@ class Renderer:
         _rnd_rect(self.screen, TOOLBAR_WOOD_MID,  panel_x, panel_y, panel_w, panel_h, 6)
         _rnd_rect(self.screen, TOOLBAR_WOOD_EDGE, panel_x, panel_y, panel_w, panel_h, 6, 1)
 
-        # Comunicar posición al sistema de input
-        placement.palette_x     = panel_x
+        placement.palette_x       = panel_x
         placement.palette_y_start = panel_y
-        placement.btn_size      = _BTN_SIZE
-        placement.btn_gap       = _BTN_GAP
+        placement.btn_size        = _BTN_SIZE
+        placement.btn_gap         = _BTN_GAP
 
         bx = panel_x + 6
         for obj_type in PALETTE:
@@ -568,14 +674,11 @@ class Renderer:
             self._draw_palette_btn(obj_type, bx, btn_y, _BTN_SIZE, btn_h, is_drag)
             bx += _BTN_SIZE + _BTN_GAP
 
-        # Hacha
         self._draw_axe_btn(bx, btn_y, _BTN_SIZE, btn_h, placement.tool == ToolMode.AXE)
 
-        # Ghost durante drag
         if placement.dragging and placement.drag_type is not None:
             self._draw_drag_ghost(placement)
 
-        # Contador de madera libre (pendiente de recoger)
         if wood > 0:
             wx = panel_x - 56
             wy = panel_y + panel_h//2 - 10
@@ -614,7 +717,6 @@ class Renderer:
             _el(self.screen,(45,110,40),cx,cy-4,16,14)
             _el(self.screen,(58,138,52),cx-3,cy-8,10,9)
             pygame.draw.rect(self.screen,(107,66,38),(cx-3,cy+8,7,10),border_radius=2)
-            # Manzanas en el icono de paleta
             _ci(self.screen,(200,50,40),cx-6,cy-10,3)
             _ci(self.screen,(200,50,40),cx+4,cy-7,3)
         elif obj_type == ObjType.BATH:
@@ -634,11 +736,19 @@ class Renderer:
             pygame.draw.rect(self.screen,(240,232,208),(cx-10,cy-6,9,6),border_radius=2)
             pygame.draw.rect(self.screen,(232,208,160),(cx-1,cy-4,10,6),border_radius=1)
         elif obj_type == ObjType.STORE:
-            # Mini almacén en botón de paleta
             pygame.draw.polygon(self.screen, C_STORE_ROOF,
                                 [(cx-14,cy),(cx,cy-11),(cx+14,cy)])
             _rnd_rect(self.screen, C_STORE_WALL, cx-12, cy, 24, 13, 2)
             _rnd_rect(self.screen, C_STORE_DOOR, cx-4,  cy+3, 8, 10, 1)
+        elif obj_type == ObjType.MINE:
+            # Mini mina en botón de paleta
+            roof_pts = [(cx-13, cy-2), (cx, cy-12), (cx+13, cy-2)]
+            pygame.draw.polygon(self.screen, C_MINE_ROOF, roof_pts)
+            _rnd_rect(self.screen, C_MINE_WOOD, cx-11, cy-2, 22, 14, 2)
+            _rnd_rect(self.screen, (30,18,8), cx-5, cy+1, 10, 11, 1)
+            # Gema en el tejado
+            _ci(self.screen, C_GEM_MID,  cx, cy-13, 3)
+            _ci(self.screen, C_GEM_LIGHT, cx, cy-13, 1)
 
     def _draw_drag_ghost(self, placement):
         mx, my   = placement.drag_x, placement.drag_y
@@ -679,3 +789,74 @@ class Renderer:
         _ci(self.screen, (26,42,26), cx+3, cy-5, 2.5)
         num = self.font_large.render(str(population), True, TOOLBAR_WOOD_LIGHT)
         self.screen.blit(num, (cx-num.get_width()//2, cy+8))
+
+    # ---------------------------------------------------------------
+    # Overlay diario
+    # ---------------------------------------------------------------
+
+    def _draw_diary_overlay(self, diary_entries: list) -> None:
+        """
+        Panel semi-transparente que muestra las últimas entradas del diario.
+        Diseño: fondo oscuro púrpura, entradas en orden cronológico inverso.
+        """
+        OW, OH = 520, _WORLD_H - 40
+        ox = (WINDOW_WIDTH - OW) // 2
+        oy = 20
+
+        panel = pygame.Surface((OW, OH), pygame.SRCALPHA)
+        panel.fill(C_DIARY_BG)
+        pygame.draw.rect(panel, C_DIARY_BORDER, (0, 0, OW, OH), 2, border_radius=10)
+
+        # Título
+        title = self.font_large.render("✦  Diario de las criaturas  ✦", True, C_DIARY_HEAD)
+        panel.blit(title, (OW//2 - title.get_width()//2, 12))
+
+        # Línea separadora
+        pygame.draw.line(panel, C_DIARY_LINE, (16, 32), (OW-16, 32), 1)
+
+        if not diary_entries:
+            empty = self.font_small.render(
+                "Aún no hay entradas. Las criaturas necesitan gemas.", True, C_DIARY_META)
+            panel.blit(empty, (OW//2 - empty.get_width()//2, OH//2))
+        else:
+            y = 42
+            for entry in reversed(diary_entries[-12:]):
+                if y >= OH - 20:
+                    break
+
+                # Cabecera: hora + id + gemas
+                meta_str = f"[{entry.get('datetime', '')[-8:]}]  {entry['creature_id']}  💎×{entry['gems_spent']}"
+                meta_s = self.font_small.render(meta_str, True, C_DIARY_META)
+                panel.blit(meta_s, (14, y))
+                y += 15
+
+                # Texto con word-wrap
+                words = entry["text"].split()
+                line, lines = "", []
+                for w in words:
+                    test = (line + " " + w).strip()
+                    if self.font_msg.size(test)[0] > OW - 28 and line:
+                        lines.append(line)
+                        line = w
+                    else:
+                        line = test
+                if line:
+                    lines.append(line)
+
+                for ln in lines:
+                    if y >= OH - 20:
+                        break
+                    ts = self.font_msg.render(ln, True, C_DIARY_TEXT)
+                    panel.blit(ts, (14, y))
+                    y += 14
+
+                y += 6
+                # Línea divisoria entre entradas
+                pygame.draw.line(panel, C_DIARY_LINE, (14, y), (OW-14, y), 1)
+                y += 8
+
+        # Pista de cierre
+        close_hint = self.font_tiny.render("[Tab] cerrar", True, C_DIARY_META)
+        panel.blit(close_hint, (OW//2 - close_hint.get_width()//2, OH - 14))
+
+        self.screen.blit(panel, (ox, oy))
