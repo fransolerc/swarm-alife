@@ -265,6 +265,10 @@ class Creature:
     # ------------------------------------------------------------------
 
     @property
+    def speed_real(self) -> float:
+        return self.navigator.speed_real
+
+    @property
     def target_obj(self):
         return self._target_obj
 
