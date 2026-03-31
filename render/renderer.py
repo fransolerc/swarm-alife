@@ -461,6 +461,10 @@ class Renderer:
 
         if c.carrying is not None:
             self._draw_carry_icon(acx, acy - r - 8, c.carrying)
+        
+        # Indicador de conversación
+        if getattr(c, '_in_conversation', False):
+            self._draw_talking_indicator(acx, acy - r - 12)
 
     def _draw_carry_icon(self, cx: int, cy: int, resource: str):
         if resource == "apple":
@@ -478,6 +482,24 @@ class Renderer:
             pygame.draw.polygon(self.screen, C_GEM_DARK, pts)
             pygame.draw.polygon(self.screen, C_GEM_MID, pts, 1)
             _ci(self.screen, C_GEM_LIGHT, cx, cy-5, 1)
+
+    def _draw_talking_indicator(self, cx: int, cy: int):
+        """Dibuja burbujas de diálogo sobre criaturas conversando."""
+        # Tres puntos animados
+        phase = (pygame.time.get_ticks() / 200) % 3
+        
+        # Burbuja de fondo
+        bubble_surf = pygame.Surface((20, 14), pygame.SRCALPHA)
+        pygame.draw.ellipse(bubble_surf, (255,255,255,180), (0,0,20,12))
+        pygame.draw.ellipse(bubble_surf, (100,100,150,200), (0,0,20,12), 1)
+        
+        # Puntos animados
+        for i, dx in enumerate([-5, 0, 5]):
+            alpha = 255 if i == int(phase) else 120
+            color = (80+i*40, 80+i*40, 120+i*30, alpha)
+            _ci(bubble_surf, color, 10+dx, 7, 2)
+        
+        self.screen.blit(bubble_surf, (cx-10, cy-7))
 
     def _draw_face(self, cx, cy, state, cheek_c):
         ey, elx, erx = cy-4, cx-6, cx+6

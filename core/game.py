@@ -5,7 +5,7 @@
 import logging
 import pygame
 
-from agent.social import update_social
+from agent.social import update_social, update_conversations
 from agent.communication import trigger_llm_message
 from agent.memory.sim_clock import SimClock
 from world.objects import WorldMap
@@ -66,19 +66,25 @@ class Game:
         """Update game state."""
         self.sim_clock.update(delta)
         self.world.update(delta)
+        
+        # Identificar criatura seleccionada para prioridad LLM
+        selected_creature = self.input.selected
 
         for creature in self.creatures:
-            signal = creature.update(delta, world=self.world)
+            signal = creature.update(delta, world=self.world, selected_creature=selected_creature)
             if signal == "reproduce":
                 self.pending_spawn.append(creature.spawn_offspring(next_id()))
             elif signal is not None:
-                trigger_llm_message(creature, signal)
+                # Solo llamar LLM si está seleccionada o pasa el rate limit
+                is_selected = (selected_creature == creature)
+                trigger_llm_message(creature, signal, is_selected=is_selected)
 
         if self.pending_spawn:
             self.creatures.extend(self.pending_spawn)
             self.pending_spawn.clear()
 
-        update_social(self.creatures, delta)
+        update_social(self.creatures, delta, self.world)
+        update_conversations(self.creatures, delta)
 
     def render(self, delta: float) -> None:
         """Render frame."""

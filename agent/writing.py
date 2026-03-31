@@ -21,10 +21,28 @@ logger = logging.getLogger(__name__)
 _DIARY_MD = DIARY_FILE.replace(".json", ".md")
 
 
-def trigger_writing(creature: "Creature", gems_spent: int) -> None:
-    """Lanza la escritura de diario en un hilo separado para no bloquear el juego."""
+def trigger_writing(creature: "Creature", gems_spent: int, is_selected: bool = False) -> None:
+    """Lanza la escritura de diario en un hilo separado solo si el modo lo permite."""
+    import config
+    
+    # Skip si está desactivado completamente
+    if config.WRITING_MODE == "disabled":
+        logger.debug(f"Writing skipped for {creature.id}: WRITING_MODE is disabled")
+        return
+    
+    # Skip si es solo para seleccionados y no está seleccionada
+    if config.WRITING_MODE == "selected_only" and not is_selected:
+        return
+    
+    # Rate limiting global: solo una escritura activa a la vez
+    active_threads = getattr(trigger_writing, '_active_writing_threads', 0)
+    if active_threads >= 1:
+        logger.debug(f"Writing skipped for {creature.id}: another writing in progress")
+        return
+    setattr(trigger_writing, '_active_writing_threads', active_threads + 1)
+    
     thread = threading.Thread(
-        target=_writing_call,
+        target=_writing_call_wrapper,
         args=(creature, gems_spent),
         daemon=True,
         name=f"write-{creature.id}",
@@ -33,8 +51,18 @@ def trigger_writing(creature: "Creature", gems_spent: int) -> None:
     logger.info(f"Writing triggered for {creature.id} ({gems_spent} gems)")
 
 
+def _writing_call_wrapper(creature: "Creature", gems_spent: int) -> None:
+    """Wrapper que maneja el contador de hilos activos y excepciones."""
+    try:
+        _writing_call(creature, gems_spent)
+    finally:
+        # Decrementar contador de forma segura
+        current = getattr(trigger_writing, '_active_writing_threads', 1)
+        setattr(trigger_writing, '_active_writing_threads', max(0, current - 1))
+
+
 def _writing_call(creature: "Creature", gems_spent: int) -> None:
-    """Llamada real al LLM. Corre en hilo separado."""
+    """Llamada real al LLM."""
     try:
         import ollama
 
@@ -48,7 +76,7 @@ def _writing_call(creature: "Creature", gems_spent: int) -> None:
         if LANGUAGE == "es":
             system = (
                 "Eres una pequeña criatura sintiente. Escribes en tu diario personal. "
-                "Primera persona, tono íntimo y breve. Sin explicaciones ni metanarración. "
+                "Primera persona, tono íntimo y breve. Sin explicaciones ni metanarrative. "
                 "Máximo 40 palabras."
             )
             prompt = (
@@ -84,7 +112,7 @@ def _writing_call(creature: "Creature", gems_spent: int) -> None:
     except Exception as e:
         logger.error(f"Writing LLM call failed for {creature.id}: {e}")
         text = (
-            "...hoy ha sido un día normal. Sigo aquí."
+            "...hoy ha sido un día normal. sigo aquí."
             if LANGUAGE == "es"
             else "...today was an ordinary day. Still here."
         )

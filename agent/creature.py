@@ -63,6 +63,14 @@ class Creature:
         self.generation = 0
         self._reproduction_cooldown = 0.0
         self._writing_cooldown = 0.0
+        
+        # Conversación
+        self._in_conversation = False
+        self._conversation_partner: Optional["Creature"] = None
+        self._conversation_timer = 0.0
+        self._conversation_end_time = 0.0
+        self._last_conversation = 0.0
+        self._conversation_diary_written = False
 
         # Messaging
         self._last_llm_time = 0.0
@@ -80,26 +88,37 @@ class Creature:
     # Main update
     # ------------------------------------------------------------------
 
-    def update(self, delta: float, world=None) -> Optional[str]:
+    def update(self, delta: float, world=None, selected_creature=None) -> Optional[str]:
+        """
+        Actualiza la criatura.
+        Si está en conversación, solo actualiza el timer y no hace otra cosa.
+        """
+        # Sí está en conversación, actualizar timer y saltar el resto
+        if self._in_conversation:
+            self._conversation_timer += delta
+            # Limpiar path para mantenerla quieta
+            self.navigator.clear_path()
+            return None
+
         self.age += delta
         self._reproduction_cooldown = max(0.0, self._reproduction_cooldown - delta)
         self._writing_cooldown = max(0.0, self._writing_cooldown - delta)
 
-        # Update systems
-        if world is not None:
+        # Update systems - saltar durante conversación
+        if not self._in_conversation and world is not None:
             self._update_seeking(delta, world)
-            self._check_writing(world)
+            self._check_writing(world, selected_creature)
 
         self.navigator.update(delta, world, self._using_obj)
         triggered = self.needs.update(delta)
         self._update_message_timer(delta)
 
-        # Check reproduction
-        if self.ready_to_reproduce():
+        # Check reproduction - no reproducirse durante conversación
+        if not self._in_conversation and self.ready_to_reproduce():
             return "reproduce"
 
-        # Check LLM triggers
-        if triggered:
+        # Check LLM triggers - no mensajes LLM durante conversación
+        if not self._in_conversation and triggered:
             return self._check_llm_trigger(triggered)
         return None
 
@@ -166,7 +185,7 @@ class Creature:
     # Diary writing
     # ------------------------------------------------------------------
 
-    def _check_writing(self, world) -> None:
+    def _check_writing(self, world, selected_creature=None) -> None:
         if not self.inventory.can_carry(self.needs) or self._writing_cooldown > 0:
             return
 
@@ -177,7 +196,8 @@ class Creature:
         store.stored_gems -= WRITING_GEM_COST
         self._writing_cooldown = WRITING_COOLDOWN
         from agent.writing import trigger_writing
-        trigger_writing(self, WRITING_GEM_COST)
+        is_selected = (selected_creature == self)
+        trigger_writing(self, WRITING_GEM_COST, is_selected=is_selected)
 
     # ------------------------------------------------------------------
     # LLM communication

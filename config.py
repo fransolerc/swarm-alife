@@ -104,10 +104,28 @@ APPLE_SHAKE_RANGE  = 80.0
 GEM_DEPOSIT_COUNT     = 4      # yacimientos generados al inicio del mundo
 MINE_EXTRACT_COOLDOWN = 12.0   # segundos entre extracciones de gema por criatura
 
+# --- Conversaciones entre criaturas ---
+CONVERSATIONS_ENABLED = True       # Activar/desactivar sistema de conversaciones
+CONVERSATION_CHANCE = 0.02          # probabilidad por tick de iniciar conversación
+CONVERSATION_MIN_HAPPINESS = 30.0  # necesita cierta felicidad para socializar
+CONVERSATION_MAX_HUNGER = 60.0       # no conversa si tiene mucha hambre
+CONVERSATION_COOLDOWN = 45.0         # segundos entre conversaciones
+CONVERSATION_GEM_COST = 3           # gemas que cuesta cada conversación (c/u)
+CONVERSATION_DURATION = 5.0          # segundos que duran quietos hablando
+
 # --- Escritura (diario LLM) ---
-WRITING_GEM_COST  = 3      # gemas que cuesta cada entrada de diario
-WRITING_COOLDOWN  = 90.0   # segundos entre escrituras por criatura
+# Desactivado por defecto para evitar colapso con muchas criaturas
+# Options: "disabled" | "selected_only" | "full"
+WRITING_MODE      = "disabled"  # "disabled" = sin diario, "selected_only" = solo criatura seleccionada, "full" = todas
+WRITING_GEM_COST  = 3           # gemas que cuesta cada entrada de diario
+WRITING_COOLDOWN  = 90.0        # segundos entre escrituras por criatura
 DIARY_FILE        = "data/diary.json"
+
+# --- LLM Mensajes ---
+# Rate limiting global para evitar colapso
+LLM_GLOBAL_COOLDOWN     = 5.0     # mínimos segundos entre llamadas LLM (globales)
+LLM_MAX_CALLS_PER_MIN   = 10    # máximo de llamadas por minuto (aprox)
+LLM_SELECTED_PRIORITY   = True    # priorizar llamadas para criaturas seleccionadas
 
 PLACEMENT_GRID_COLOR    = (58,  82,  40)
 PLACEMENT_HOVER_COLOR   = (144, 224, 112)
