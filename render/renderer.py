@@ -484,22 +484,34 @@ class Renderer:
             _ci(self.screen, C_GEM_LIGHT, cx, cy-5, 1)
 
     def _draw_talking_indicator(self, cx: int, cy: int):
-        """Dibuja burbujas de diálogo sobre criaturas conversando."""
-        # Tres puntos animados
-        phase = (pygame.time.get_ticks() / 200) % 3
+        """Dibuja una burbuja de diálogo estilo cómic sobre criaturas conversando."""
+        # Tres puntos animados para indicar habla
+        ticks = pygame.time.get_ticks()
+        phase = (ticks // 300) % 3
         
-        # Burbuja de fondo
-        bubble_surf = pygame.Surface((20, 14), pygame.SRCALPHA)
-        pygame.draw.ellipse(bubble_surf, (255,255,255,180), (0,0,20,12))
-        pygame.draw.ellipse(bubble_surf, (100,100,150,200), (0,0,20,12), 1)
+        bw, bh = 24, 16
+        bx, by = cx - bw//2, cy - bh
         
+        # Sombra suave de la burbuja
+        sh = pygame.Surface((bw+4, bh+4), pygame.SRCALPHA)
+        pygame.draw.rect(sh, (0, 0, 0, 40), (0, 0, bw+4, bh+4), border_radius=8)
+        self.screen.blit(sh, (bx-2, by+2))
+        
+        # Burbuja blanca
+        _rnd_rect(self.screen, (255, 255, 255), bx, by, bw, bh, 6)
+        _rnd_rect(self.screen, (100, 100, 150), bx, by, bw, bh, 6, 1)
+        
+        # Rabillo de la burbuja apuntando a la criatura
+        pygame.draw.polygon(self.screen, (255, 255, 255), 
+                            [(cx, cy-2), (cx-4, by+bh-2), (cx+4, by+bh-2)])
+        pygame.draw.polygon(self.screen, (100, 100, 150), 
+                            [(cx, cy-2), (cx-4, by+bh-2), (cx+4, by+bh-2)], 1)
+
         # Puntos animados
-        for i, dx in enumerate([-5, 0, 5]):
-            alpha = 255 if i == int(phase) else 120
-            color = (80+i*40, 80+i*40, 120+i*30, alpha)
-            _ci(bubble_surf, color, 10+dx, 7, 2)
-        
-        self.screen.blit(bubble_surf, (cx-10, cy-7))
+        for i, dx in enumerate([-6, 0, 6]):
+            alpha = 255 if i == phase else 100
+            dot_color = (80, 80, 120, alpha)
+            _ci(self.screen, dot_color, cx + dx, by + bh//2, 2)
 
     def _draw_face(self, cx, cy, state, cheek_c):
         ey, elx, erx = cy-4, cx-6, cx+6
