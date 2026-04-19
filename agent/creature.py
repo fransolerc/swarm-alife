@@ -91,21 +91,21 @@ class Creature:
     def update(self, delta: float, world=None, selected_creature=None) -> Optional[str]:
         """
         Actualiza la criatura.
-        Si está en conversación, solo actualiza el timer y no hace otra cosa.
         """
-        # Sí está en conversación, actualizar timer y saltar el resto
+        # Si está en conversación, solo mantenemos la posición.
+        # El timer se gestiona en social.update_conversations para evitar doble incremento.
         if self._in_conversation:
-            self._conversation_timer += delta
-            # Limpiar path para mantenerla quieta
             self.navigator.clear_path()
+            # Opcional: permitir que las necesidades sigan fluctuando (a ritmo normal o reducido)
+            self.needs.update(delta) 
             return None
 
         self.age += delta
         self._reproduction_cooldown = max(0.0, self._reproduction_cooldown - delta)
         self._writing_cooldown = max(0.0, self._writing_cooldown - delta)
 
-        # Update systems - saltar durante conversación
-        if not self._in_conversation and world is not None:
+        # Update systems - saltar durante conversación (ya manejado arriba)
+        if world is not None:
             self._update_seeking(delta, world)
             self._check_writing(world, selected_creature)
 
@@ -113,12 +113,12 @@ class Creature:
         triggered = self.needs.update(delta)
         self._update_message_timer(delta)
 
-        # Check reproduction - no reproducirse durante conversación
-        if not self._in_conversation and self.ready_to_reproduce():
+        # Check reproduction
+        if self.ready_to_reproduce():
             return "reproduce"
 
-        # Check LLM triggers - no mensajes LLM durante conversación
-        if not self._in_conversation and triggered:
+        # Check LLM triggers
+        if triggered:
             return self._check_llm_trigger(triggered)
         return None
 
