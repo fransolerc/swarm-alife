@@ -6,10 +6,14 @@
 
 import logging
 import threading
+import time
 from typing import TYPE_CHECKING
 
 from locales import t
-from config import OLLAMA_MODEL, LLM_MAX_TOKENS, LANGUAGE
+from config import (
+    OLLAMA_MODEL, LLM_MAX_TOKENS, LANGUAGE,
+    LLM_GLOBAL_COOLDOWN, LLM_MAX_CALLS_PER_MIN, LLM_SELECTED_PRIORITY
+)
 
 if TYPE_CHECKING:
     from agent.creature import Creature
@@ -24,14 +28,12 @@ def trigger_llm_message(creature: "Creature", need: str, is_selected: bool = Fal
     
     Rate limiting: solo una llamada LLM activa global, prioridad a seleccionadas.
     """
-    import config
-    import time
-    
+
     # Verificar cooldown global
     now = time.time()
     last_global_call = getattr(trigger_llm_message, '_last_global_call', 0)
     time_since_last = now - last_global_call
-    if time_since_last < config.LLM_GLOBAL_COOLDOWN:
+    if time_since_last < LLM_GLOBAL_COOLDOWN:
         # Solo permitir si es seleccionada y han pasado al menos 1 segundo
         if not (is_selected and time_since_last >= 1.0):
             logger.debug(f"LLM skipped for {creature.id}: global cooldown ({time_since_last:.1f}s)")
@@ -43,9 +45,9 @@ def trigger_llm_message(creature: "Creature", need: str, is_selected: bool = Fal
     call_times = [ct for ct in call_times if now - ct < 60]
     setattr(trigger_llm_message, '_call_times', call_times)
     
-    if len(call_times) >= config.LLM_MAX_CALLS_PER_MIN:
+    if len(call_times) >= LLM_MAX_CALLS_PER_MIN:
         # Solo permitir si es seleccionada y prioridad está habilitada
-        if not (is_selected and config.LLM_SELECTED_PRIORITY):
+        if not (is_selected and LLM_SELECTED_PRIORITY):
             logger.debug(f"LLM skipped for {creature.id}: max calls per minute reached")
             return
     

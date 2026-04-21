@@ -13,6 +13,8 @@ from agent.memory.associative_memory import AssociativeMemory
 from agent.navigation import Navigator, cell_center
 from agent.inventory import Inventory
 from agent.behavior.seek_food import SeekFoodBehavior
+from agent.behavior.carry_resource import CarryResourceBehavior
+from agent.writing import trigger_writing
 
 from config import (
     WINDOW_WIDTH, WINDOW_HEIGHT, TOOLBAR_HEIGHT,
@@ -125,7 +127,6 @@ class Creature:
             return
 
         if urgent is None and self.inventory.can_carry(self.needs):
-            from agent.behavior.carry_resource import CarryResourceBehavior
             carry = CarryResourceBehavior(self)
             carry.execute(delta, world)
             return
@@ -183,7 +184,6 @@ class Creature:
 
         store.stored_gems -= WRITING_GEM_COST
         self._writing_cooldown = WRITING_COOLDOWN
-        from agent.writing import trigger_writing
         is_selected = (selected_creature == self)
         trigger_writing(self, WRITING_GEM_COST, is_selected=is_selected)
 

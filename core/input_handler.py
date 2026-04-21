@@ -7,6 +7,9 @@ import logging
 from typing import TYPE_CHECKING
 
 from config import CREATURE_RADIUS
+from utils import load_json
+from core.persistence import save_colony, save_world
+from world.placement import ToolMode
 
 if TYPE_CHECKING:
     from agent.creature import Creature
@@ -60,7 +63,6 @@ class InputHandler:
         if event.key == pygame.K_TAB:
             self.show_diary = not self.show_diary
             if self.show_diary:
-                from utils import load_json
                 self.diary_entries = load_json(diary_file, default=[])
             return
 
@@ -78,7 +80,6 @@ class InputHandler:
             for c in targets:
                 c.play()
         elif key == pygame.K_g:
-            from core.persistence import save_colony, save_world
             for c in creatures:
                 c.save()
             save_world(world)
@@ -116,7 +117,6 @@ class InputHandler:
             placement.on_right_click(mx, my)
 
     def _handle_left_click(self, mx: int, my: int, creatures: list, world, placement) -> "Creature | None":
-        from world.placement import ToolMode
 
         clicked = find_creature_at(creatures, mx, my)
         if clicked:

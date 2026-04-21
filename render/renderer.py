@@ -18,7 +18,8 @@ from config import (
     TOOLBAR_WOOD_DARK, TOOLBAR_WOOD_MID, TOOLBAR_WOOD_LIGHT, TOOLBAR_WOOD_EDGE,
     TOOLBAR_BTN_DARK, TOOLBAR_BTN_SEL, TOOLBAR_BTN_SEL_EDGE, TOOLBAR_TEXT,
 )
-from world.objects import ObjType, OBJ_LABEL, WorldObject
+from world.objects import ObjType, OBJ_LABEL, WorldObject, APPLE_ROT_TIME
+from world.placement import PALETTE, ToolMode
 
 logger = logging.getLogger(__name__)
 
@@ -363,7 +364,6 @@ class Renderer:
     # ---------------------------------------------------------------
 
     def _draw_ground_items(self, world):
-        from world.objects import APPLE_ROT_TIME
         for item in world.ground_items():
             cx, cy = int(item.x), int(item.y)
             fade  = max(0.2, 1.0 - item.age / APPLE_ROT_TIME * 0.7)
@@ -676,7 +676,6 @@ class Renderer:
         return panel_x, panel_y, panel_w, panel_h, btn_y, btn_h
 
     def _draw_palette_toolbar(self, placement, wood: int = 0):
-        from world.placement import PALETTE, ToolMode
 
         panel_x, panel_y, panel_w, panel_h, btn_y, btn_h = self._palette_geometry(PALETTE)
 
