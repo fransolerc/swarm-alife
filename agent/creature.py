@@ -63,14 +63,14 @@ class Creature:
         self.generation = 0
         self._reproduction_cooldown = 0.0
         self._writing_cooldown = 0.0
-        
-        # Conversación
-        self._in_conversation = False
-        self._conversation_partner: Optional["Creature"] = None
-        self._conversation_timer = 0.0
-        self._conversation_end_time = 0.0
-        self._last_conversation = 0.0
-        self._conversation_diary_written = False
+
+        # Conversation state (public: shared with social.py)
+        self.in_conversation = False
+        self.conversation_partner: Optional["Creature"] = None
+        self.conversation_timer = 0.0
+        self.conversation_end_time = 0.0
+        self.last_conversation = 0.0
+        self.conversation_diary_written = False
 
         # Messaging
         self._last_llm_time = 0.0
@@ -89,22 +89,15 @@ class Creature:
     # ------------------------------------------------------------------
 
     def update(self, delta: float, world=None, selected_creature=None) -> Optional[str]:
-        """
-        Actualiza la criatura.
-        """
-        # Si está en conversación, solo mantenemos la posición.
-        # El timer se gestiona en social.update_conversations para evitar doble incremento.
-        if self._in_conversation:
+        if self.in_conversation:
+            self.conversation_timer += delta
             self.navigator.clear_path()
-            # Opcional: permitir que las necesidades sigan fluctuando (a ritmo normal o reducido)
-            self.needs.update(delta) 
             return None
 
         self.age += delta
         self._reproduction_cooldown = max(0.0, self._reproduction_cooldown - delta)
         self._writing_cooldown = max(0.0, self._writing_cooldown - delta)
 
-        # Update systems - saltar durante conversación (ya manejado arriba)
         if world is not None:
             self._update_seeking(delta, world)
             self._check_writing(world, selected_creature)
@@ -113,11 +106,9 @@ class Creature:
         triggered = self.needs.update(delta)
         self._update_message_timer(delta)
 
-        # Check reproduction
         if self.ready_to_reproduce():
             return "reproduce"
 
-        # Check LLM triggers
         if triggered:
             return self._check_llm_trigger(triggered)
         return None
@@ -129,19 +120,16 @@ class Creature:
     def _update_seeking(self, delta: float, world) -> None:
         urgent = self.needs.most_urgent()
 
-        # Hunger first
         if urgent == "hunger" or self.needs.hunger >= HUNGER_SEEK_THRESHOLD:
             self._food_behavior.execute(delta, world)
             return
 
-        # No urgent needs - try carrying
         if urgent is None and self.inventory.can_carry(self.needs):
             from agent.behavior.carry_resource import CarryResourceBehavior
             carry = CarryResourceBehavior(self)
             carry.execute(delta, world)
             return
 
-        # Urgent non-hunger needs
         if urgent:
             self._cancel_carrying()
             self._refresh_target(urgent, world)
@@ -257,9 +245,9 @@ class Creature:
             return False
         n = self.needs
         return (
-            n.hunger <= (100.0 - REPRODUCTION_NEED_THRESHOLD)
-            and n.hygiene >= REPRODUCTION_NEED_THRESHOLD
-            and n.happiness >= REPRODUCTION_NEED_THRESHOLD
+                n.hunger <= (100.0 - REPRODUCTION_NEED_THRESHOLD)
+                and n.hygiene >= REPRODUCTION_NEED_THRESHOLD
+                and n.happiness >= REPRODUCTION_NEED_THRESHOLD
         )
 
     def spawn_offspring(self, offspring_id: str) -> "Creature":
@@ -351,7 +339,7 @@ class Creature:
 
     def __repr__(self) -> str:
         carry = f", carrying={self.inventory.resource}" if self.inventory.is_carrying else ""
-        path = f", path={len(self.navigator._path)}steps" if self.navigator.has_path else ""
+        path = f", path={self.navigator.path_length}steps" if self.navigator.has_path else ""
         return (
             f"Creature({self.id!r}, cell=({self.grid_col},{self.grid_row}), "
             f"pos=({self.x:.0f},{self.y:.0f}), {self.needs}{carry}{path})"

@@ -463,7 +463,7 @@ class Renderer:
             self._draw_carry_icon(acx, acy - r - 8, c.carrying)
         
         # Indicador de conversación
-        if getattr(c, '_in_conversation', False):
+        if c.in_conversation:
             self._draw_talking_indicator(acx, acy - r - 12)
 
     def _draw_carry_icon(self, cx: int, cy: int, resource: str):

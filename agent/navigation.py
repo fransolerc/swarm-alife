@@ -255,3 +255,7 @@ class Navigator:
             if 0 <= nc <= _MAX_COL and 0 <= nr <= _MAX_ROW:
                 return nc, nr
         return creature.grid_col, creature.grid_row
+
+    @property
+    def path_length(self) -> int:
+        return len(self._path)
