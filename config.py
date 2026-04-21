@@ -26,8 +26,8 @@ NEED_MAX = 100.0
 NEED_MIN = 0.0
 
 HUNGER_RATE       =  0.5
-HYGIENE_RATE      =  0.5   # Cambiado: debe ser positivo (direction=-1 lo invierte)
-HAPPINESS_RATE    =  0.5   # Cambiado: debe ser positivo (direction=-1 lo invierte)
+HYGIENE_RATE      =  0.5
+HAPPINESS_RATE    =  0.5
 
 NEED_INITIAL_VARIANCE = 20.0
 

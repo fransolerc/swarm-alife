@@ -5,7 +5,9 @@
 from enum import Enum, auto
 from typing import Optional
 from world.objects import ObjType, OBJ_SIZE, WorldMap
-from config import GRID_CELL, WINDOW_WIDTH, WINDOW_HEIGHT, TOOLBAR_HEIGHT
+from config import (
+    GRID_CELL, WINDOW_WIDTH, WINDOW_HEIGHT, TOOLBAR_HEIGHT
+)
 
 _AREA_W  = WINDOW_WIDTH
 _WORLD_H = WINDOW_HEIGHT - TOOLBAR_HEIGHT

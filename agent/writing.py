@@ -10,7 +10,7 @@ import time
 from datetime import datetime
 from typing import TYPE_CHECKING
 
-from config import OLLAMA_MODEL, LANGUAGE, DIARY_FILE
+from config import OLLAMA_MODEL, LANGUAGE, DIARY_FILE, WRITING_MODE
 from utils import atomic_write_json, load_json, safe_append_text
 
 if TYPE_CHECKING:
@@ -23,15 +23,13 @@ _DIARY_MD = DIARY_FILE.replace(".json", ".md")
 
 def trigger_writing(creature: "Creature", gems_spent: int, is_selected: bool = False) -> None:
     """Lanza la escritura de diario en un hilo separado solo si el modo lo permite."""
-    import config
-    
     # Skip si está desactivado completamente
-    if config.WRITING_MODE == "disabled":
+    if WRITING_MODE == "disabled":
         logger.debug(f"Writing skipped for {creature.id}: WRITING_MODE is disabled")
         return
     
     # Skip si es solo para seleccionados y no está seleccionada
-    if config.WRITING_MODE == "selected_only" and not is_selected:
+    if WRITING_MODE == "selected_only" and not is_selected:
         return
     
     # Rate limiting global: solo una escritura activa a la vez

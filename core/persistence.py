@@ -5,7 +5,7 @@
 import os
 import logging
 
-from config import DATA_DIR
+from config import DATA_DIR, WINDOW_WIDTH
 from utils import atomic_write_json, load_json
 
 logger = logging.getLogger(__name__)
@@ -18,7 +18,6 @@ _COLONY_FILE = "data/colony.json"
 def setup_paths() -> None:
     """Initialize paths from config."""
     global _AREA_W, _WORLD_FILE, _COLONY_FILE
-    from config import WINDOW_WIDTH
     _AREA_W = WINDOW_WIDTH
     _WORLD_FILE = os.path.join(DATA_DIR, "world.json")
     _COLONY_FILE = os.path.join(DATA_DIR, "colony.json")
